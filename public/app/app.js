@@ -15,6 +15,18 @@ function setValue(id, value) {
     el.value = value == null ? '' : String(value);
 }
 
+function setSelectByText(id, text) {
+    const el = $(id);
+    if (!el || el.tagName !== 'SELECT') return;
+    const desired = String(text || '').trim().toLowerCase();
+    if (!desired) return;
+
+    const opts = Array.from(el.options || []);
+    const match = opts.find((o) => String(o.value || '').trim().toLowerCase() === desired)
+        || opts.find((o) => String(o.text || '').trim().toLowerCase() === desired);
+    if (match) el.value = match.value;
+}
+
 function setResult(text) {
     // Result box removed; use toast notifications instead.
     if (text) showToast({ type: 'info', title: 'Info', body: text, ttlMs: 4000 });
@@ -135,6 +147,7 @@ async function loadDefaults() {
         setValue('email', d.email);
         setValue('phone', d.phone);
         setValue('department', d.department);
+        setSelectByText('department', d.department);
         setValue('because', d.because);
         setValue('reason', d.reason);
         // UI uses <input type="date"> (YYYY-MM-DD)
