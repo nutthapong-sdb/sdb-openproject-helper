@@ -84,7 +84,6 @@ function setScreenshotPreview(url) {
 function setBusy(busy) {
     const submitBtn = $('wfhSubmitBtn');
     const saveBtn = $('wfhSaveBtn');
-    const dryRun = $('dryRun');
 
     if (submitBtn) {
         submitBtn.disabled = !!busy;
@@ -94,9 +93,20 @@ function setBusy(busy) {
         saveBtn.disabled = !!busy;
         saveBtn.textContent = busy ? 'Working...' : 'Save Information';
     }
-    if (dryRun) {
-        dryRun.disabled = !!busy;
-    }
+}
+
+function dmyToIso(dmy) {
+    const m = /^\s*(\d{2})\/(\d{2})\/(\d{4})\s*$/.exec(String(dmy || ''));
+    if (!m) return '';
+    const [, dd, mm, yyyy] = m;
+    return `${yyyy}-${mm}-${dd}`;
+}
+
+function isoToDmy(iso) {
+    const m = /^\s*(\d{4})-(\d{2})-(\d{2})\s*$/.exec(String(iso || ''));
+    if (!m) return '';
+    const [, yyyy, mm, dd] = m;
+    return `${dd}/${mm}/${yyyy}`;
 }
 
 function currentFormData() {
@@ -108,8 +118,9 @@ function currentFormData() {
         department: readValue('department'),
         because: readValue('because'),
         reason: readValue('reason'),
-        startDate: readValue('startDate'),
-        endDate: readValue('endDate'),
+        // Keep server-side expectations stable (DD/MM/YYYY)
+        startDate: isoToDmy(readValue('startDate')) || readValue('startDate'),
+        endDate: isoToDmy(readValue('endDate')) || readValue('endDate'),
         extra: readValue('extra')
     };
 }
@@ -126,8 +137,9 @@ async function loadDefaults() {
         setValue('department', d.department);
         setValue('because', d.because);
         setValue('reason', d.reason);
-        setValue('startDate', d.startDate);
-        setValue('endDate', d.endDate);
+        // UI uses <input type="date"> (YYYY-MM-DD)
+        setValue('startDate', dmyToIso(d.startDate) || d.startDate);
+        setValue('endDate', dmyToIso(d.endDate) || d.endDate);
         setValue('extra', d.extra);
     } catch {
         // ignore
@@ -168,8 +180,7 @@ async function submitWfh() {
     setScreenshotPreview(null);
     showToast({ type: 'info', title: 'Submitting', body: 'Running WFH automation...', ttlMs: 3500 });
 
-    const dryRunEl = $('dryRun');
-    const dryRun = !!(dryRunEl && dryRunEl.checked);
+    const dryRun = false;
 
     try {
         // Always persist defaults before submit.
@@ -187,9 +198,8 @@ async function submitWfh() {
 
         const data = await res.json().catch(() => null);
         const screenshotUrl = (data && data.screenshot) ? `${window.location.origin}${data.screenshot}` : null;
-        if (dryRun && screenshotUrl) {
-            setScreenshotPreview(screenshotUrl);
-        }
+        // Keep screenshot visible when the server returns one.
+        if (screenshotUrl) setScreenshotPreview(screenshotUrl);
 
         if (!res.ok || (data && data.ok === false)) {
             showToast({
@@ -204,7 +214,7 @@ async function submitWfh() {
 
         showToast({
             type: 'success',
-            title: dryRun ? 'WFH Dry Run Complete' : 'WFH Submitted',
+            title: 'WFH Submitted',
             body: data && data.finalUrl ? `Final URL: ${data.finalUrl}` : 'Done.',
             linkHref: screenshotUrl || undefined,
             linkText: data && data.screenshot ? 'Open screenshot' : undefined,

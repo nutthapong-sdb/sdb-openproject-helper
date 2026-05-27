@@ -136,12 +136,6 @@ async function main() {
     await page.goto(`${BASE_URL}/app`, { waitUntil: 'domcontentloaded' });
     console.log('[WFH-TEST] Opened /app');
 
-    // Ensure we are NOT in dry-run mode.
-    const dryRunToggle = page.locator('#dryRun');
-    if ((await dryRunToggle.count().catch(() => 0)) > 0) {
-      await dryRunToggle.uncheck().catch(() => { });
-    }
-
     // Trigger submit (real save).
     console.log('[WFH-TEST] Click Submit');
     await page.locator('#wfhSubmitBtn').click();

@@ -91,29 +91,22 @@
                         </div>
 
                         <div class="form-group" style="margin-bottom: 0;">
-                            <label for="startDate">วันที่เริ่ม (DD/MM/YYYY)</label>
-                            <input id="startDate" type="text" placeholder="DD/MM/YYYY (e.g. 27/05/2026)" />
+                            <label for="startDate">วันที่เริ่ม</label>
+                            <input id="startDate" type="date" />
                         </div>
                         <div class="form-group" style="margin-bottom: 0;">
-                            <label for="endDate">วันที่สิ้นสุด (DD/MM/YYYY)</label>
-                            <input id="endDate" type="text" placeholder="DD/MM/YYYY (e.g. 27/05/2026)" />
+                            <label for="endDate">วันที่สิ้นสุด</label>
+                            <input id="endDate" type="date" />
                         </div>
                     </div>
 
-                    <div style="display:flex; align-items:center; gap:10px; margin-top: 14px;">
-                        <label style="display:flex; align-items:center; gap:8px; margin: 0; font-weight: 600;">
-                            <input id="dryRun" type="checkbox" checked />
-                            Dry run (no submit)
-                        </label>
-                    </div>
-
-                    <div class="btn-row">
+                    <div class="btn-row" style="margin-top: 14px;">
                         <button id="wfhSubmitBtn" type="button">Submit</button>
                         <button id="wfhSaveBtn" type="button" class="btn-secondary">Save Information</button>
                     </div>
 
                     <div id="screenshotWrap" style="display:none; margin-top: 14px;">
-                        <label style="margin-bottom: 8px;">Screenshot (Dry Run)</label>
+                        <label style="margin-bottom: 8px;">Screenshot</label>
                         <img id="screenshotImg" alt="Dry run screenshot" style="width: 100%; border-radius: 14px; border: 1px solid var(--border-color);" />
                     </div>
                 </main>
