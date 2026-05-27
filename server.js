@@ -189,12 +189,13 @@ app.post('/api/automation/debutservice/login', async (req, res) => {
     if (!session || !session.isValid) return res.status(401).json({ error: 'Not logged in' });
 
     const targetUrl = 'https://debutservice.softdebut.com/v2/form/work_from_home';
-    const username = (process.env.DEBUTSERVICE_USER || '').trim();
-    const password = process.env.DEBUTSERVICE_PASS || '';
+    const body = req.body || {};
+    const username = (body.email ? String(body.email) : '').trim();
+    const password = body.loginPassword ? String(body.loginPassword) : '';
     if (!username || !password) {
         return res.status(400).json({
             error: 'Missing credentials',
-            details: 'Set DEBUTSERVICE_USER and DEBUTSERVICE_PASS in environment variables.'
+            details: 'Provide email and loginPassword from the WFH form.'
         });
     }
 
@@ -305,16 +306,32 @@ app.post('/api/automation/debutservice/work-from-home/add', async (req, res) => 
 
     const listUrl = 'https://debutservice.softdebut.com/v2/form/work_from_home';
     const addUrl = 'https://debutservice.softdebut.com/v2/form/work_from_home/add';
-    const username = (process.env.DEBUTSERVICE_USER || '').trim();
-    const password = process.env.DEBUTSERVICE_PASS || '';
+    const body = req.body || {};
+    const username = (body.email ? String(body.email) : '').trim();
+    let password = body.loginPassword ? String(body.loginPassword) : '';
+    if (!password) {
+        // Fall back to saved per-user password if not provided in request.
+        const userId = req.cookies.user_id || req.cookies.sdb_session;
+        const saved = await new Promise((resolve) => {
+            if (!userId) return resolve('');
+            db.get('SELECT data FROM wfh_form_defaults WHERE user_id = ?', [userId], (err, row) => {
+                if (err || !row || !row.data) return resolve('');
+                try {
+                    const parsed = JSON.parse(row.data);
+                    resolve(parsed && parsed.loginPassword ? String(parsed.loginPassword) : '');
+                } catch {
+                    resolve('');
+                }
+            });
+        });
+        password = saved;
+    }
     if (!username || !password) {
         return res.status(400).json({
             error: 'Missing credentials',
-            details: 'Set DEBUTSERVICE_USER and DEBUTSERVICE_PASS in environment variables.'
+            details: 'Enter a password once and Save Information. After that you can leave it blank.'
         });
     }
-
-    const body = req.body || {};
     const dryRun = typeof body.dryRun === 'boolean' ? body.dryRun : true;
 
     const userId = req.cookies.user_id || req.cookies.sdb_session;
@@ -1069,31 +1086,12 @@ app.get('/api/wfh/defaults', (req, res) => {
 
     db.get('SELECT data FROM wfh_form_defaults WHERE user_id = ?', [userId], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
-        if (!row) {
-            // Seed defaults on first use so UI always loads from DB.
-            const defaults = {
-                thaiName: 'นัทธพงศ์ วิวิธสุรการ',
-                engName: 'Nutthapong Vivithsurakarn',
-                email: 'nutthapong.v@softdebut.com',
-                phone: '0853166969',
-                department: 'Technology division',
-                because: 'ขอใช้สิทธิ์',
-                reason: 'ขอใช้สิทธิ์',
-                startDate: '27/05/2026',
-                endDate: '27/05/2026',
-                extra: 'ขอใช้สิทธิ์'
-            };
-
-            db.run(
-                `INSERT INTO wfh_form_defaults (user_id, data, updated_at)
-                 VALUES (?, ?, CURRENT_TIMESTAMP)`,
-                [userId, JSON.stringify(defaults)],
-                () => res.json(defaults)
-            );
-            return;
-        }
+        if (!row) return res.json({});
         try {
-            res.json(JSON.parse(row.data));
+            const parsed = JSON.parse(row.data);
+            // Never return password to the client.
+            if (parsed && typeof parsed === 'object') delete parsed.loginPassword;
+            res.json(parsed);
         } catch {
             res.json({});
         }
@@ -1104,18 +1102,47 @@ app.post('/api/wfh/defaults', (req, res) => {
     const userId = req.cookies.user_id || req.cookies.sdb_session;
     if (!userId) return res.status(401).json({ error: 'Not authenticated' });
 
-    const data = req.body && typeof req.body === 'object' ? req.body : {};
-    const json = JSON.stringify(data);
-    db.run(
-        `INSERT INTO wfh_form_defaults (user_id, data, updated_at)
-         VALUES (?, ?, CURRENT_TIMESTAMP)
-         ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP`,
-        [userId, json],
-        function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ ok: true });
+    const incoming = req.body && typeof req.body === 'object' ? req.body : {};
+
+    // Preserve existing saved password if client didn't provide one.
+    db.get('SELECT data FROM wfh_form_defaults WHERE user_id = ?', [userId], (getErr, row) => {
+        if (getErr) return res.status(500).json({ error: getErr.message });
+
+        let existing = {};
+        if (row && row.data) {
+            try { existing = JSON.parse(row.data) || {}; } catch { existing = {}; }
         }
-    );
+
+        const nextPasswordRaw = Object.prototype.hasOwnProperty.call(incoming, 'loginPassword')
+            ? String(incoming.loginPassword || '')
+            : '';
+
+        const next = {
+            thaiName: incoming.thaiName || '',
+            engName: incoming.engName || '',
+            email: incoming.email || '',
+            phone: incoming.phone || '',
+            department: incoming.department || '',
+            because: incoming.because || '',
+            reason: incoming.reason || '',
+            startDate: incoming.startDate || '',
+            endDate: incoming.endDate || '',
+            extra: incoming.extra || '',
+            loginPassword: nextPasswordRaw ? nextPasswordRaw : (existing.loginPassword || ''),
+        };
+
+        const json = JSON.stringify(next);
+        db.run(
+            `INSERT INTO wfh_form_defaults (user_id, data, updated_at)
+             VALUES (?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP`,
+            [userId, json],
+            function (err) {
+                if (err) return res.status(500).json({ error: err.message });
+                res.json({ ok: true });
+            }
+        );
+    });
 });
 
 // Helper to save projects to DB (Upsert Logic)

@@ -68,6 +68,15 @@
                             <input id="email" type="text" placeholder="example@example.com" />
                         </div>
                         <div class="form-group" style="margin-bottom: 0;">
+                            <label for="loginPassword">Password</label>
+                            <div style="display:flex; gap:10px; align-items:center;">
+                                <input id="loginPassword" type="password" placeholder="Debutservice password" style="flex: 1;" disabled />
+                                <button id="toggleLoginPassword" type="button" class="btn-secondary" style="width:auto; padding:10px 12px; display:none;">Show</button>
+                            </div>
+                            <button id="changeLoginPassword" type="button" class="btn-secondary" style="margin-top: 10px; width:auto; padding:10px 12px;">Change Password</button>
+                            <div class="hint">Password is saved per user, but never shown again after saving.</div>
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
                             <label for="phone">เบอร์โทรศัพท์</label>
                             <input id="phone" type="text" placeholder="0812345678" />
                         </div>

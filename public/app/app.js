@@ -107,6 +107,22 @@ function setBusy(busy) {
     }
 }
 
+let passwordEditing = false;
+
+function setPasswordEditing(enabled) {
+    passwordEditing = !!enabled;
+    const input = $('loginPassword');
+    const toggleBtn = $('toggleLoginPassword');
+    if (input) {
+        input.disabled = !passwordEditing;
+        if (!passwordEditing) input.type = 'password';
+    }
+    if (toggleBtn) {
+        toggleBtn.style.display = passwordEditing ? '' : 'none';
+        toggleBtn.textContent = 'Show';
+    }
+}
+
 function dmyToIso(dmy) {
     const m = /^\s*(\d{2})\/(\d{2})\/(\d{4})\s*$/.exec(String(dmy || ''));
     if (!m) return '';
@@ -126,6 +142,7 @@ function currentFormData() {
         thaiName: readValue('thaiName'),
         engName: readValue('engName'),
         email: readValue('email'),
+        loginPassword: passwordEditing ? readValue('loginPassword') : '',
         phone: readValue('phone'),
         department: readValue('department'),
         because: readValue('because'),
@@ -145,6 +162,9 @@ async function loadDefaults() {
         setValue('thaiName', d.thaiName);
         setValue('engName', d.engName);
         setValue('email', d.email);
+        // Never hydrate password from server storage.
+        setValue('loginPassword', '');
+        setPasswordEditing(false);
         setValue('phone', d.phone);
         setValue('department', d.department);
         setSelectByText('department', d.department);
@@ -180,6 +200,9 @@ async function saveDefaults() {
             });
             return;
         }
+        // Hide and clear password UI after save so it can't be read back.
+        setValue('loginPassword', '');
+        setPasswordEditing(false);
         showToast({ type: 'success', title: 'Saved', body: 'Information saved for this user.' });
     } catch (e) {
         showToast({ type: 'error', title: 'Save Failed', body: e && e.message ? e.message : String(e) });
@@ -196,11 +219,11 @@ async function submitWfh() {
     const dryRun = false;
 
     try {
-        // Always persist defaults before submit.
+        // Always persist defaults before submit (do not overwrite saved password if blank).
         fetch('/api/wfh/defaults', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(currentFormData())
+            body: JSON.stringify({ ...currentFormData(), loginPassword: '' })
         }).catch(() => { });
 
         const res = await fetch('/api/automation/debutservice/work-from-home/add', {
@@ -247,6 +270,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     const submitBtn = $('wfhSubmitBtn');
     if (saveBtn) saveBtn.addEventListener('click', saveDefaults);
     if (submitBtn) submitBtn.addEventListener('click', submitWfh);
+
+    const changeBtn = $('changeLoginPassword');
+    if (changeBtn) {
+        changeBtn.addEventListener('click', () => {
+            setPasswordEditing(true);
+            setValue('loginPassword', '');
+            const input = $('loginPassword');
+            if (input) input.focus();
+        });
+    }
+
+    const toggleBtn = $('toggleLoginPassword');
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', () => {
+            const input = $('loginPassword');
+            if (!input) return;
+            const nextType = input.type === 'password' ? 'text' : 'password';
+            input.type = nextType;
+            toggleBtn.textContent = nextType === 'password' ? 'Show' : 'Hide';
+        });
+    }
 
     await loadDefaults();
 });

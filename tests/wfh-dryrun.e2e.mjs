@@ -136,6 +136,20 @@ async function main() {
     await page.goto(`${BASE_URL}/app`, { waitUntil: 'domcontentloaded' });
     console.log('[WFH-TEST] Opened /app');
 
+    // Fill required fields (first-time user defaults are empty).
+    await page.locator('#thaiName').fill('Test Thai');
+    await page.locator('#engName').fill('Test Eng');
+    await page.locator('#email').fill(user);
+    await page.locator('#changeLoginPassword').click();
+    await page.locator('#loginPassword').fill(pass);
+    await page.locator('#phone').fill('0800000000');
+    await page.locator('#department').selectOption({ label: 'Technology division' });
+    await page.locator('#because').fill('ขอใช้สิทธิ์');
+    await page.locator('#reason').fill('ขอใช้สิทธิ์');
+    await page.locator('#extra').fill('ขอใช้สิทธิ์');
+    await page.locator('#startDate').fill('2026-06-02');
+    await page.locator('#endDate').fill('2026-06-02');
+
     // Trigger submit (real save).
     console.log('[WFH-TEST] Click Submit');
     await page.locator('#wfhSubmitBtn').click();
