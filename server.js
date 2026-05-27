@@ -33,9 +33,839 @@ app.get(['/', '/index.html'], (req, res, next) => {
     next();
 });
 
+// React SPA mount (served from /public/app/index.html)
+// Keep static assets under /app/* working (don't hijack requests with extensions).
+app.get(/^\/app(\/.*)?$/, (req, res, next) => {
+    // Allow common static assets to be served directly, but don't allow HTML bypass.
+    if (/\.(js|css|map|png|jpg|jpeg|svg|ico|webp)$/i.test(req.path)) return next();
+    const session = getSession(req);
+    if (!session || !session.isValid) return res.redirect('/login.html');
+    res.sendFile(require('path').resolve(__dirname, 'public', 'app', 'index.html'));
+});
+
 app.use(express.static('public'));
 
 const HOST = 'https://openproject.softdebut.com';
+
+// --- Playwright automation (server-side) ---
+// Note: Playwright requires its browsers installed (usually via: npx playwright install)
+let _playwright;
+async function getPlaywrightChromium() {
+    if (!_playwright) {
+        _playwright = require('playwright');
+    }
+    return _playwright.chromium;
+}
+
+function getPlaywrightLaunchOptions() {
+    const headless = String(process.env.PLAYWRIGHT_HEADLESS || 'true').toLowerCase() !== 'false';
+    const slowMoRaw = process.env.PLAYWRIGHT_SLOWMO;
+    const slowMo = slowMoRaw ? Number(slowMoRaw) : 0;
+    return {
+        headless,
+        ...(Number.isFinite(slowMo) && slowMo > 0 ? { slowMo } : {})
+    };
+}
+
+function getPlaywrightPostRunPauseMs() {
+    const pauseRaw = process.env.PLAYWRIGHT_POSTRUN_PAUSE_MS;
+    const pause = pauseRaw ? Number(pauseRaw) : 0;
+    return Number.isFinite(pause) && pause > 0 ? pause : 0;
+}
+
+function isDebutserviceAdminLoginUrl(url) {
+    return typeof url === 'string' && url.includes('/admin/login.php');
+}
+
+async function maybeClickOkDialog(page) {
+    const okBtn = page.getByRole('button', { name: /^ok$/i }).first();
+    if ((await okBtn.count().catch(() => 0)) > 0) {
+        await okBtn.click().catch(() => { });
+        await page.waitForTimeout(250);
+    }
+}
+
+async function debutserviceLoginIfNeeded(page, { username, password, postLoginUrl }) {
+    // If we already see the list URL content, don't do anything.
+    if (!isDebutserviceAdminLoginUrl(page.url())) return { ok: true, didLogin: false };
+
+    await maybeClickOkDialog(page);
+
+    const userCtl = page.locator('input[name="username"], input[name="user"], input[id*="user" i]').first();
+    // Legacy page sometimes has inputs without useful attributes.
+    const userCtlFallback = page.locator('xpath=//*[contains(normalize-space(),"Username")]/following::input[1]').first();
+
+    const passCtl = page.locator('input[type="password"], input[name="password"], input[id*="pass" i]').first();
+    const passCtlFallback = page.locator('xpath=//*[contains(normalize-space(),"Password")]/following::input[1]').first();
+
+    const resolvedUserCtl = (await userCtl.count().catch(() => 0)) > 0 ? userCtl : userCtlFallback;
+    const resolvedPassCtl = (await passCtl.count().catch(() => 0)) > 0 ? passCtl : passCtlFallback;
+
+    if ((await resolvedUserCtl.count().catch(() => 0)) === 0 || (await resolvedPassCtl.count().catch(() => 0)) === 0) {
+        return { ok: false, error: 'Could not find login fields' };
+    }
+
+    await resolvedUserCtl.fill(username);
+    await resolvedPassCtl.fill(password);
+
+    const submit = page.getByRole('button', { name: /login|log in|sign in|\u0e40\u0e02\u0e49\u0e32\u0e2a\u0e39\u0e48\u0e23\u0e30\u0e1a\u0e1a/i })
+        .or(page.locator('input[type="submit"], button[type="submit"]'))
+        // Debutservice legacy login uses an image input button.
+        .or(page.locator('input[type="image"][src*="bt_login" i], input[type="image"][src$="/admin/images/bt_login.gif" i]'))
+        .or(page.getByText(/sign in/i))
+        .first();
+
+    await Promise.all([
+        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => { }),
+        submit.click().catch(() => { })
+    ]);
+
+    await page.waitForTimeout(800);
+    if (postLoginUrl) {
+        await page.goto(postLoginUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    }
+    if (isDebutserviceAdminLoginUrl(page.url())) {
+        await maybeClickOkDialog(page);
+        return { ok: false, error: 'Login failed (still on login page)' };
+    }
+
+    return { ok: true, didLogin: true };
+}
+
+app.post('/api/automation/check', async (req, res) => {
+    const session = getSession(req);
+    if (!session || !session.isValid) return res.status(401).json({ error: 'Not logged in' });
+
+    const url = (req.body && req.body.url ? String(req.body.url) : '').trim();
+    if (!url) return res.status(400).json({ error: 'url is required' });
+
+    let parsed;
+    try {
+        parsed = new URL(url);
+    } catch {
+        return res.status(400).json({ error: 'url must be a valid URL' });
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return res.status(400).json({ error: 'url must start with http:// or https://' });
+    }
+
+    let browser;
+    try {
+        const chromium = await getPlaywrightChromium();
+        browser = await chromium.launch(getPlaywrightLaunchOptions());
+
+        const context = await browser.newContext();
+        const page = await context.newPage();
+
+        const response = await page.goto(url, {
+            waitUntil: 'domcontentloaded',
+            timeout: 30_000
+        });
+
+        const title = await page.title();
+        const finalUrl = page.url();
+        const status = response ? response.status() : null;
+
+        res.json({
+            ok: status !== null ? status >= 200 && status < 400 : true,
+            inputUrl: url,
+            finalUrl,
+            status,
+            title
+        });
+    } catch (e) {
+        res.status(500).json({
+            ok: false,
+            inputUrl: url,
+            error: e && e.message ? e.message : String(e)
+        });
+    } finally {
+        if (browser) await browser.close().catch(() => { });
+    }
+});
+
+app.post('/api/automation/debutservice/login', async (req, res) => {
+    const session = getSession(req);
+    if (!session || !session.isValid) return res.status(401).json({ error: 'Not logged in' });
+
+    const targetUrl = 'https://debutservice.softdebut.com/v2/form/work_from_home';
+    const username = (process.env.DEBUTSERVICE_USER || '').trim();
+    const password = process.env.DEBUTSERVICE_PASS || '';
+    if (!username || !password) {
+        return res.status(400).json({
+            error: 'Missing credentials',
+            details: 'Set DEBUTSERVICE_USER and DEBUTSERVICE_PASS in environment variables.'
+        });
+    }
+
+    let browser;
+    let page;
+    let popup;
+    try {
+        const chromium = await getPlaywrightChromium();
+        browser = await chromium.launch(getPlaywrightLaunchOptions());
+        const context = await browser.newContext();
+        page = await context.newPage();
+
+        const response = await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+
+        // Debutservice sometimes redirects to /admin/login.php with a legacy form.
+        const currentUrl = page.url();
+        let userField;
+        let passField;
+        let submitBtn;
+
+        if (currentUrl.includes('/admin/login.php')) {
+            userField = page.locator('input[name="username"], input[name="user"], input[id*="user" i], input[type="text"]').first();
+            passField = page.locator('input[type="password"], input[name="password"], input[id*="pass" i]').first();
+            submitBtn = page.locator('input[type="image"][src*="bt_login" i], input[type="image"][src$="/admin/images/bt_login.gif" i], button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Sign")').first();
+        } else {
+            userField = page.getByLabel(/email|username|user name/i)
+                .or(page.getByPlaceholder(/email|username|user name/i))
+                .or(page.locator('input[type="email"]'))
+                .or(page.locator('input[name="username"], input[name="email"], input[id*="user" i], input[id*="email" i]'))
+                .first();
+            passField = page.getByLabel(/password/i)
+                .or(page.getByPlaceholder(/password/i))
+                .or(page.locator('input[type="password"]'))
+                .or(page.locator('input[name="password"], input[id*="pass" i]'))
+                .first();
+            submitBtn = page.getByRole('button', { name: /log in|login|sign in|submit/i })
+                .or(page.locator('button[type="submit"]'))
+                .or(page.locator('form button'))
+                .first();
+        }
+
+        if ((await userField.count().catch(() => 0)) === 0 || (await passField.count().catch(() => 0)) === 0) {
+            return res.status(500).json({
+                ok: false,
+                error: 'Could not find login fields on page',
+                finalUrl: page.url(),
+                title: await page.title().catch(() => null)
+            });
+        }
+        if ((await submitBtn.count().catch(() => 0)) === 0) {
+            return res.status(500).json({
+                ok: false,
+                error: 'Could not find submit button',
+                finalUrl: page.url(),
+                title: await page.title().catch(() => null)
+            });
+        }
+
+        await userField.fill(username);
+        await passField.fill(password);
+
+        await Promise.all([
+            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => { }),
+            submitBtn.click().catch(() => { })
+        ]);
+
+        // Give the app a moment to finish any redirects.
+        await page.waitForTimeout(1500);
+
+        const finalUrl = page.url();
+        const title = await page.title().catch(() => null);
+        const status = response ? response.status() : null;
+
+        // Save a screenshot for debugging without exposing credentials.
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const debugDir = './public/debug';
+        if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir);
+        const screenshotRelPath = `/debug/debutservice_login_${timestamp}.png`;
+        await page.screenshot({ path: publicFilePath(screenshotRelPath), fullPage: true }).catch(() => { });
+
+        const pauseMs = getPlaywrightPostRunPauseMs();
+        if (!getPlaywrightLaunchOptions().headless && pauseMs) {
+            await page.waitForTimeout(pauseMs).catch(() => { });
+        }
+
+        res.json({
+            ok: true,
+            inputUrl: targetUrl,
+            finalUrl,
+            status,
+            title,
+            screenshot: screenshotRelPath
+        });
+    } catch (e) {
+        res.status(500).json({
+            ok: false,
+            inputUrl: 'https://debutservice.softdebut.com/v2/form/work_from_home',
+            error: e && e.message ? e.message : String(e)
+        });
+    } finally {
+        if (browser) await browser.close().catch(() => { });
+    }
+});
+
+app.post('/api/automation/debutservice/work-from-home/add', async (req, res) => {
+    const session = getSession(req);
+    if (!session || !session.isValid) return res.status(401).json({ error: 'Not logged in' });
+
+    const listUrl = 'https://debutservice.softdebut.com/v2/form/work_from_home';
+    const addUrl = 'https://debutservice.softdebut.com/v2/form/work_from_home/add';
+    const username = (process.env.DEBUTSERVICE_USER || '').trim();
+    const password = process.env.DEBUTSERVICE_PASS || '';
+    if (!username || !password) {
+        return res.status(400).json({
+            error: 'Missing credentials',
+            details: 'Set DEBUTSERVICE_USER and DEBUTSERVICE_PASS in environment variables.'
+        });
+    }
+
+    const body = req.body || {};
+    const dryRun = typeof body.dryRun === 'boolean' ? body.dryRun : true;
+
+    const userId = req.cookies.user_id || req.cookies.sdb_session;
+
+    const storedDefaults = await new Promise((resolve) => {
+        if (!userId) return resolve(null);
+        db.get('SELECT data FROM wfh_form_defaults WHERE user_id = ?', [userId], (err, row) => {
+            if (err || !row) return resolve(null);
+            try { resolve(JSON.parse(row.data)); }
+            catch { resolve(null); }
+        });
+    });
+
+    const fallbackDefaults = {
+        thaiName: 'นัทธพงศ์ วิวิธสุรการ',
+        engName: 'Nutthapong Vivithsurakarn',
+        email: 'nutthapong.v@softdebut.com',
+        phone: '0853166969',
+        department: 'Technology Devision',
+        because: 'ขอใช้สิทธิ์',
+        reason: 'ขอใช้สิทธิ์',
+        startDate: '27/05/2026',
+        endDate: '27/05/2026',
+        extra: 'ขอใช้สิทธิ์'
+    };
+
+    const mergedDefaults = { ...fallbackDefaults, ...(storedDefaults || {}) };
+    const payload = {
+        thaiName: (body.thaiName ? String(body.thaiName) : mergedDefaults.thaiName).trim(),
+        engName: (body.engName ? String(body.engName) : mergedDefaults.engName).trim(),
+        email: (body.email ? String(body.email) : mergedDefaults.email).trim(),
+        phone: (body.phone ? String(body.phone) : mergedDefaults.phone).trim(),
+        department: (body.department ? String(body.department) : mergedDefaults.department).trim(),
+        because: (body.because ? String(body.because) : mergedDefaults.because).trim(),
+        reason: (body.reason ? String(body.reason) : mergedDefaults.reason).trim(),
+        startDate: (body.startDate ? String(body.startDate) : mergedDefaults.startDate).trim(),
+        endDate: (body.endDate ? String(body.endDate) : mergedDefaults.endDate).trim(),
+        extra: (body.extra ? String(body.extra) : mergedDefaults.extra).trim()
+    };
+
+    const traceEnabled = String(process.env.PLAYWRIGHT_TRACE_LOG || 'false').toLowerCase() === 'true';
+    const trace = [];
+    const tlog = (msg) => {
+        const line = `[WFH-AUTO] ${msg}`;
+        trace.push(line);
+        if (traceEnabled) console.log(line);
+    };
+
+    function toDateInputValue(ddmmyyyy) {
+        const m = /^\s*(\d{2})\/(\d{2})\/(\d{4})\s*$/.exec(ddmmyyyy);
+        if (!m) return ddmmyyyy;
+        const [, dd, mm, yyyy] = m;
+        return `${yyyy}-${mm}-${dd}`;
+    }
+
+    function ddmmyyyyToIso(ddmmyyyy) {
+        const m = /^\s*(\d{2})\/(\d{2})\/(\d{4})\s*$/.exec(String(ddmmyyyy || ''));
+        if (!m) return String(ddmmyyyy || '').trim();
+        const [, dd, mm, yyyy] = m;
+        return `${yyyy}-${mm}-${dd}`;
+    }
+
+    async function findControlByLabelText(page, labelText) {
+        const label = page.locator('label', { hasText: labelText }).first();
+        if ((await label.count().catch(() => 0)) === 0) return null;
+
+        const forId = await label.getAttribute('for').catch(() => null);
+        if (forId) {
+            const byFor = page.locator(`#${CSS.escape(forId)}`).first();
+            if ((await byFor.count().catch(() => 0)) > 0) return byFor;
+        }
+
+        // Common pattern: <label>..</label><input ...>
+        const sibling = label.locator('xpath=following-sibling::*[1]//*[self::input or self::textarea or self::select] | xpath=following-sibling::*[1][self::input or self::textarea or self::select]').first();
+        if ((await sibling.count().catch(() => 0)) > 0) return sibling;
+
+        // Fallback: nearest container
+        const container = label.locator('xpath=ancestor-or-self::*[self::div or self::td or self::th][1]').first();
+        const inside = container.locator('input, textarea, select').first();
+        if ((await inside.count().catch(() => 0)) > 0) return inside;
+
+        return null;
+    }
+
+    async function dumpFormControls(page) {
+        const controls = await page.locator('input, textarea, select').evaluateAll((els) => {
+            function text(s) {
+                return typeof s === 'string' ? s.replace(/\s+/g, ' ').trim() : '';
+            }
+
+            return els.map((el) => {
+                const tag = el.tagName.toLowerCase();
+                const type = tag === 'input' ? (el.getAttribute('type') || 'text') : null;
+                const id = el.getAttribute('id') || null;
+                const name = el.getAttribute('name') || null;
+                const placeholder = el.getAttribute('placeholder') || null;
+                const ariaLabel = el.getAttribute('aria-label') || null;
+
+                let labelText = null;
+                if (id) {
+                    const lab = el.ownerDocument.querySelector(`label[for="${CSS.escape(id)}"]`);
+                    if (lab) labelText = text(lab.textContent);
+                }
+                if (!labelText) {
+                    // Try nearest preceding label in same container.
+                    const container = el.closest('div, td, th, tr, form') || el.parentElement;
+                    if (container) {
+                        const lab = container.querySelector('label');
+                        if (lab) labelText = text(lab.textContent);
+                    }
+                }
+
+                const outerHTML = el.outerHTML ? String(el.outerHTML).slice(0, 300) : null;
+
+                return {
+                    tag,
+                    type,
+                    id,
+                    name,
+                    placeholder,
+                    ariaLabel,
+                    labelText,
+                    outerHTML,
+                };
+            });
+        }).catch(() => []);
+
+        return controls;
+    }
+
+    async function selectOptionLoose(selectLocator, desiredLabel) {
+        const desired = String(desiredLabel || '').replace(/\s+/g, ' ').trim();
+        if (!desired) return false;
+
+        const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const desiredN = norm(desired);
+
+        const options = await selectLocator.locator('option').evaluateAll((opts) =>
+            opts.map((o) => ({
+                value: o.getAttribute('value') || '',
+                label: (o.textContent || '').replace(/\s+/g, ' ').trim(),
+            }))
+        ).catch(() => []);
+
+        const candidates = options
+            .map((o) => ({ ...o, labelN: norm(o.label) }))
+            .filter((o) => o.value && o.labelN);
+
+        const exact = candidates.find((o) => o.labelN === desiredN);
+        const includes = candidates.find((o) => o.labelN.includes(desiredN) || desiredN.includes(o.labelN));
+        const picked = exact || includes;
+        if (!picked) return false;
+
+        await selectLocator.selectOption(picked.value);
+        return true;
+    }
+
+    async function setInputValueForce(inputLocator, value) {
+        const v = String(value ?? '');
+        await inputLocator.evaluate((el, nextValue) => {
+            try {
+                el.removeAttribute('readonly');
+            } catch {
+                // ignore
+            }
+
+            // flatpickr wires itself on the input element.
+            // Prefer using its API so internal state stays consistent.
+            const fp = el._flatpickr;
+            if (fp && typeof fp.setDate === 'function') {
+                const m = /^\s*(\d{2})\/(\d{2})\/(\d{4})\s*$/.exec(String(nextValue));
+                if (m) {
+                    const dd = Number(m[1]);
+                    const mm = Number(m[2]);
+                    const yyyy = Number(m[3]);
+                    const d = new Date(yyyy, mm - 1, dd);
+                    fp.setDate(d, true);
+                } else {
+                    fp.setDate(nextValue, true);
+                }
+
+                // Some flatpickr configs use a hidden input + altInput. Ensure visible value is set.
+                try {
+                    if (fp.altInput) fp.altInput.value = String(nextValue);
+                } catch {
+                    // ignore
+                }
+                try {
+                    el.value = String(nextValue);
+                } catch {
+                    // ignore
+                }
+                try {
+                    el.setAttribute('value', String(nextValue));
+                } catch {
+                    // ignore
+                }
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new Event('blur', { bubbles: true }));
+            } else {
+                el.value = nextValue;
+                try {
+                    el.setAttribute('value', String(nextValue));
+                } catch {
+                    // ignore
+                }
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new Event('blur', { bubbles: true }));
+            }
+        }, v);
+    }
+
+    async function pickFlatpickrDate(page, inputLocator, ddmmyyyy) {
+        const m = /^\s*(\d{2})\/(\d{2})\/(\d{4})\s*$/.exec(String(ddmmyyyy || ''));
+        if (!m) return false;
+        const dd = String(Number(m[1]));
+        const mm = Number(m[2]);
+        const yyyy = String(Number(m[3]));
+
+        await inputLocator.click().catch(() => { });
+        const cal = page.locator('.flatpickr-calendar.open').last();
+        if ((await cal.count().catch(() => 0)) === 0) return false;
+
+        const monthSelect = cal.locator('select.flatpickr-monthDropdown-months').first();
+        const yearInput = cal.locator('input.cur-year').first();
+        if ((await monthSelect.count().catch(() => 0)) > 0) {
+            await monthSelect.selectOption(String(mm - 1)).catch(() => { });
+        }
+        if ((await yearInput.count().catch(() => 0)) > 0) {
+            await yearInput.fill(yyyy).catch(() => { });
+            await yearInput.press('Enter').catch(() => { });
+        }
+
+        const day = cal
+            .locator('.flatpickr-day:not(.prevMonthDay):not(.nextMonthDay)')
+            .filter({ hasText: new RegExp(`^${dd}$`) })
+            .first();
+        if ((await day.count().catch(() => 0)) === 0) return false;
+        await day.click();
+        return true;
+    }
+
+    async function setFlatpickrHiddenSibling(visibleInputLocator, value) {
+        const hidden = visibleInputLocator
+            .locator('xpath=preceding-sibling::input[@type="hidden" and contains(@class,"flatpickr-input")]')
+            .first();
+
+        if ((await hidden.count().catch(() => 0)) === 0) return false;
+
+        // Hidden input is typically the one submitted. Update it explicitly.
+        await hidden.evaluate((el, nextValue) => {
+            el.value = String(nextValue);
+            try {
+                el.setAttribute('value', String(nextValue));
+            } catch {
+                // ignore
+            }
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        }, String(value ?? ''));
+        return true;
+    }
+
+    async function setFlatpickrHiddenBySelector(page, selector, value) {
+        const hidden = page.locator(selector).first();
+        if ((await hidden.count().catch(() => 0)) === 0) return false;
+        await hidden.evaluate((el, nextValue) => {
+            el.value = String(nextValue);
+            try {
+                el.setAttribute('value', String(nextValue));
+            } catch {
+                // ignore
+            }
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        }, String(value ?? ''));
+        return true;
+    }
+
+    async function resolveVisibleDateInput(dateControl) {
+        const type = await dateControl.getAttribute('type').catch(() => null);
+        if (type && type.toLowerCase() === 'hidden') {
+            const nextVisible = dateControl
+                .locator('xpath=following-sibling::input[not(@type="hidden")][1]')
+                .first();
+            if ((await nextVisible.count().catch(() => 0)) > 0) return nextVisible;
+        }
+        return dateControl;
+    }
+
+    async function tryClickFirst(page, locators) {
+        for (const loc of locators) {
+            try {
+                if (!loc) continue;
+                const count = await loc.count().catch(() => 0);
+                if (!count) continue;
+                const target = loc.first();
+                await target.scrollIntoViewIfNeeded().catch(() => { });
+                // Some overlays intercept normal clicks; try force.
+                await target.click({ timeout: 5000 }).catch(async () => {
+                    await target.click({ timeout: 5000, force: true });
+                });
+                return true;
+            } catch {
+                // try next
+            }
+        }
+        return false;
+    }
+
+    let browser;
+    let page;
+    try {
+        const chromium = await getPlaywrightChromium();
+        tlog('launch browser');
+        browser = await chromium.launch(getPlaywrightLaunchOptions());
+        const context = await browser.newContext();
+        page = await context.newPage();
+
+        // Go straight to the add form page (no need to click "เพิ่มรายการ").
+        tlog(`goto ${addUrl}`);
+        await page.goto(addUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+        tlog(`landed ${page.url()}`);
+
+        // If redirected to the legacy admin login, log in then reopen the add form.
+        if (isDebutserviceAdminLoginUrl(page.url())) {
+            tlog('redirected to admin login, attempting login');
+            const loginResult = await debutserviceLoginIfNeeded(page, { username, password, postLoginUrl: addUrl });
+            if (!loginResult.ok) {
+                tlog(`login failed: ${loginResult.error || 'unknown'}`);
+                const ts = new Date().toISOString().replace(/[:.]/g, '-');
+                const shot = `/debug/debutservice_login_failed_${ts}.png`;
+                await page.screenshot({ path: publicFilePath(shot), fullPage: true }).catch(() => { });
+                return res.status(401).json({ ok: false, error: loginResult.error || 'Login failed', finalUrl: page.url(), screenshot: shot, trace });
+            }
+            // debutserviceLoginIfNeeded already navigates to postLoginUrl.
+            tlog(`post-login landed ${page.url()}`);
+        }
+
+        // Allow dynamic content to render before locating labels.
+        tlog('wait 1500ms for dynamic content');
+        await page.waitForTimeout(1500);
+
+        if (isDebutserviceAdminLoginUrl(page.url())) {
+            tlog('still on admin login after login attempt');
+            const ts = new Date().toISOString().replace(/[:.]/g, '-');
+            const shot = `/debug/debutservice_login_still_${ts}.png`;
+            await page.screenshot({ path: publicFilePath(shot), fullPage: true }).catch(() => { });
+            return res.status(401).json({ ok: false, error: 'Login failed (still on login page)', finalUrl: page.url(), screenshot: shot, trace });
+        }
+
+        const thaiNameCtl = await findControlByLabelText(page, 'ชื่อ-นามสกุล (ภาษาไทย)');
+        const engNameCtl = await findControlByLabelText(page, 'ชื่อ-นามสกุล (ภาษาอังกฤษ)');
+        const emailCtl = await findControlByLabelText(page, 'อีเมล');
+        const phoneCtl = await findControlByLabelText(page, 'เบอร์โทรศัพท์');
+        const deptCtl = await findControlByLabelText(page, 'แผนก/สังกัด');
+        const becauseCtl = await findControlByLabelText(page, 'เนื่องจาก');
+        const reasonCtl = await findControlByLabelText(page, 'เหตุผล');
+        const startCtl = await findControlByLabelText(page, 'วันที่เริ่ม');
+        const endCtl = await findControlByLabelText(page, 'วันที่สิ้นสุด');
+        const descriptionCtl = page.locator('#description, textarea[name="description"]').first();
+
+        const missing = [];
+        if (!thaiNameCtl) missing.push('ชื่อ-นามสกุล (ภาษาไทย)');
+        if (!engNameCtl) missing.push('ชื่อ-นามสกุล (ภาษาอังกฤษ)');
+        if (!emailCtl) missing.push('อีเมล');
+        if (!phoneCtl) missing.push('เบอร์โทรศัพท์');
+        if (!deptCtl) missing.push('แผนก/สังกัด');
+        if (!becauseCtl) missing.push('เนื่องจาก');
+        if (!reasonCtl) missing.push('เหตุผล');
+        if (!startCtl) missing.push('วันที่เริ่ม');
+        if (!endCtl) missing.push('วันที่สิ้นสุด');
+        if ((await descriptionCtl.count().catch(() => 0)) === 0) missing.push('description');
+        if (missing.length) {
+            tlog(`missing controls: ${missing.join(', ')}`);
+            const ts = new Date().toISOString().replace(/[:.]/g, '-');
+            const shot = `/debug/debutservice_fields_missing_${ts}.png`;
+            await page.screenshot({ path: publicFilePath(shot), fullPage: true }).catch(() => { });
+            const elements = await dumpFormControls(page);
+            return res.status(500).json({ ok: false, error: 'Some fields were not found', missing, finalUrl: page.url(), screenshot: shot, elements, trace });
+        }
+
+        tlog('fill text fields');
+        await thaiNameCtl.fill(payload.thaiName);
+        await engNameCtl.fill(payload.engName);
+        await emailCtl.fill(payload.email);
+        await phoneCtl.fill(payload.phone);
+
+        const deptTag = await deptCtl.evaluate((el) => el.tagName.toLowerCase()).catch(() => '');
+        if (deptTag === 'select') {
+            tlog(`select department: ${payload.department}`);
+            await selectOptionLoose(deptCtl, payload.department).catch(() => { });
+        } else {
+            await deptCtl.fill(payload.department);
+        }
+
+        const becauseTag = await becauseCtl.evaluate((el) => el.tagName.toLowerCase()).catch(() => '');
+        if (becauseTag === 'select') {
+            tlog(`select because: ${payload.because}`);
+            await selectOptionLoose(becauseCtl, payload.because).catch(() => { });
+        } else {
+            await becauseCtl.fill(payload.because);
+        }
+
+        tlog('fill reason');
+        await reasonCtl.fill(payload.reason);
+
+        const startType = await startCtl.getAttribute('type').catch(() => null);
+        const endType = await endCtl.getAttribute('type').catch(() => null);
+
+        const startValue = startType === 'date' ? toDateInputValue(payload.startDate) : payload.startDate;
+        const endValue = endType === 'date' ? toDateInputValue(payload.endDate) : payload.endDate;
+
+        // Debutservice WFH form uses a hidden input that stores ISO (yyyy-mm-dd).
+        const startIso = ddmmyyyyToIso(payload.startDate);
+        const endIso = ddmmyyyyToIso(payload.endDate);
+
+        // Always try to set the hidden inputs directly by id/name.
+        // These are the values that will be submitted.
+        tlog(`set hidden dates start=${startIso} end=${endIso}`);
+        await setFlatpickrHiddenBySelector(page, 'input[type="hidden"]#wfh_startdate, input[type="hidden"][name="wfh_startdate"]', startIso).catch(() => { });
+        await setFlatpickrHiddenBySelector(page, 'input[type="hidden"]#wfh_enddate, input[type="hidden"][name="wfh_enddate"]', endIso).catch(() => { });
+
+        // Dates: we only need the hidden ISO inputs filled.
+        // Do not interact with the visible flatpickr text inputs.
+        tlog('skip visible date inputs (hidden ISO already set)');
+
+        // Capture what the DOM currently holds for dates.
+        const dateDebug = {
+            startIso,
+            endIso,
+            hiddenStartValue: await page.locator('input[type="hidden"]#wfh_startdate, input[type="hidden"][name="wfh_startdate"]').first().getAttribute('value').catch(() => null),
+            hiddenEndValue: await page.locator('input[type="hidden"]#wfh_enddate, input[type="hidden"][name="wfh_enddate"]').first().getAttribute('value').catch(() => null),
+            visibleStartValue: null,
+            visibleEndValue: null,
+        };
+
+        tlog(`dateDebug hiddenStart=${dateDebug.hiddenStartValue} hiddenEnd=${dateDebug.hiddenEndValue}`);
+
+        tlog('fill description');
+        await descriptionCtl.scrollIntoViewIfNeeded().catch(() => { });
+        await descriptionCtl.fill(payload.extra);
+        tlog('description filled');
+
+        // The form's required "ข้อมูลเพิ่มเติม" is textarea#description.
+        await descriptionCtl.fill(payload.extra);
+
+        // Safety net: if the page has any other required text inputs/textareas left blank,
+        // fill them with the extra note so the form is complete.
+        // (Skip hidden/readonly/date flatpickr inputs and selects.)
+        const requiredTextControls = page.locator(
+            'input[required]:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="image"]):not([type="checkbox"]):not([type="radio"]), textarea[required]'
+        );
+        const reqCount = await requiredTextControls.count().catch(() => 0);
+        for (let i = 0; i < reqCount; i++) {
+            const ctl = requiredTextControls.nth(i);
+            const tag = await ctl.evaluate((el) => el.tagName.toLowerCase()).catch(() => '');
+            if (tag === 'input') {
+                const type = await ctl.getAttribute('type').catch(() => null);
+                if (type && type.toLowerCase() === 'file') continue;
+            }
+
+            const isReadonly = await ctl.getAttribute('readonly').catch(() => null);
+            const hasFlatpickr = await ctl.getAttribute('class').then((c) => (c || '').includes('flatpickr')).catch(() => false);
+            if (isReadonly !== null && hasFlatpickr) continue;
+
+            const current = await ctl.inputValue().catch(() => '');
+            if (String(current || '').trim()) continue;
+
+            await ctl.fill(payload.extra).catch(() => { });
+        }
+
+        if (!dryRun) {
+            tlog('click Save');
+            const submitBtn = page.getByRole('button', { name: /^save$/i })
+                .or(page.getByRole('button', { name: /submit|save|ส่ง|บันทึก/i }))
+                .or(page.locator('button[type="submit"], input[type="submit"]'))
+                .first();
+            if ((await submitBtn.count().catch(() => 0)) > 0) {
+                await Promise.all([
+                    page.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch(() => { }),
+                    submitBtn.click().catch(() => { })
+                ]);
+                await page.waitForTimeout(800);
+            }
+
+            // After save, refresh and submit for approval.
+            tlog('refresh page');
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => { });
+            await page.waitForTimeout(800);
+
+            tlog('click Submit Approval');
+            const approvalBtn = page.locator('#btnSubmitApproval').first();
+            if ((await approvalBtn.count().catch(() => 0)) > 0) {
+                await approvalBtn.scrollIntoViewIfNeeded().catch(() => { });
+                await approvalBtn.click().catch(async () => {
+                    await approvalBtn.click({ force: true }).catch(() => { });
+                });
+                await page.waitForTimeout(800);
+            } else {
+                tlog('Submit Approval button not found');
+            }
+        }
+
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const screenshotRelPath = `/debug/debutservice_wfh_add_${timestamp}.png`;
+        await page.screenshot({ path: publicFilePath(screenshotRelPath), fullPage: true });
+
+        const pauseMs = getPlaywrightPostRunPauseMs();
+        if (!getPlaywrightLaunchOptions().headless && pauseMs) {
+            await page.waitForTimeout(pauseMs).catch(() => { });
+        }
+
+        res.json({
+            ok: true,
+            inputUrl: addUrl,
+            finalUrl: page.url(),
+            title: await page.title().catch(() => null),
+            dryRun,
+            screenshot: screenshotRelPath,
+            dateDebug,
+            trace
+        });
+    } catch (e) {
+        tlog(`error: ${e && e.message ? e.message : String(e)}`);
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        let shot = null;
+        const targetForShot = page;
+        if (targetForShot) {
+            shot = `/debug/debutservice_wfh_error_${ts}.png`;
+            await targetForShot.screenshot({ path: publicFilePath(shot), fullPage: true }).catch(() => { });
+
+            const pauseMs = getPlaywrightPostRunPauseMs();
+            if (!getPlaywrightLaunchOptions().headless && pauseMs) {
+                await targetForShot.waitForTimeout(pauseMs).catch(() => { });
+            }
+        }
+        res.status(500).json({
+            ok: false,
+            inputUrl: addUrl,
+            error: e && e.message ? e.message : String(e),
+            screenshot: shot,
+            finalUrl: page ? page.url() : null,
+            trace
+        });
+    } finally {
+        if (browser) await browser.close().catch(() => { });
+    }
+});
 
 // Improved Puppeteer Fetch for Cloudflare Bypass
 async function puppeteerFetch(url, options = {}, specificApiKey = null, timeoutMs = 60000) {
@@ -175,6 +1005,12 @@ async function fetchWithSession(session, url, options = {}) { return await puppe
 
 const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
+const path = require('path');
+
+function publicFilePath(relPath) {
+    const cleaned = String(relPath || '').replace(/^\/+/, '');
+    return path.resolve(__dirname, 'public', cleaned);
+}
 
 // Initialize SQLite Database
 const dbFile = process.env.DB_FILE || './projects.db';
@@ -218,6 +1054,68 @@ db.serialize(() => {
 
     db.run("CREATE TABLE IF NOT EXISTS user_project_mapping (user_id TEXT, project_id TEXT, PRIMARY KEY(user_id, project_id))");
     db.run("CREATE TABLE IF NOT EXISTS project_types (project_id TEXT, type_id TEXT, type_name TEXT, PRIMARY KEY(project_id, type_id))");
+
+    // Per-user defaults for the WFH automation form (stored as JSON).
+    db.run(`CREATE TABLE IF NOT EXISTS wfh_form_defaults (
+        user_id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+});
+
+app.get('/api/wfh/defaults', (req, res) => {
+    const userId = req.cookies.user_id || req.cookies.sdb_session;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    db.get('SELECT data FROM wfh_form_defaults WHERE user_id = ?', [userId], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!row) {
+            // Seed defaults on first use so UI always loads from DB.
+            const defaults = {
+                thaiName: 'นัทธพงศ์ วิวิธสุรการ',
+                engName: 'Nutthapong Vivithsurakarn',
+                email: 'nutthapong.v@softdebut.com',
+                phone: '0853166969',
+                department: 'Technology Devision',
+                because: 'ขอใช้สิทธิ์',
+                reason: 'ขอใช้สิทธิ์',
+                startDate: '27/05/2026',
+                endDate: '27/05/2026',
+                extra: 'ขอใช้สิทธิ์'
+            };
+
+            db.run(
+                `INSERT INTO wfh_form_defaults (user_id, data, updated_at)
+                 VALUES (?, ?, CURRENT_TIMESTAMP)`,
+                [userId, JSON.stringify(defaults)],
+                () => res.json(defaults)
+            );
+            return;
+        }
+        try {
+            res.json(JSON.parse(row.data));
+        } catch {
+            res.json({});
+        }
+    });
+});
+
+app.post('/api/wfh/defaults', (req, res) => {
+    const userId = req.cookies.user_id || req.cookies.sdb_session;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const data = req.body && typeof req.body === 'object' ? req.body : {};
+    const json = JSON.stringify(data);
+    db.run(
+        `INSERT INTO wfh_form_defaults (user_id, data, updated_at)
+         VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP`,
+        [userId, json],
+        function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ ok: true });
+        }
+    );
 });
 
 // Helper to save projects to DB (Upsert Logic)

@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "PW_HEADLESS=false PW_SLOWMO=150 node tests/auth-regression.mjs && PW_HEADLESS=false PW_SLOWMO=150 node tests/wfh-regression.mjs && PLAYWRIGHT_HEADLESS=false PLAYWRIGHT_SLOWMO=250 PLAYWRIGHT_INTERACTIVE_DATE_PICKER=false PLAYWRIGHT_TRACE_LOG=true PLAYWRIGHT_POSTRUN_PAUSE_MS=5000 PW_HEADLESS=false PW_SLOWMO=150 node tests/wfh-dryrun.e2e.mjs"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +20,7 @@
     "express": "^5.2.1",
     "jquery-ui-dist": "^1.13.3",
     "node-fetch": "^2.7.0",
+    "playwright": "^1.54.2",
     "puppeteer": "^24.34.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",

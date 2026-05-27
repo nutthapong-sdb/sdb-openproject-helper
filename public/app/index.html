@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Automation</title>
+    <link rel="stylesheet" href="/css/style.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        .result-box {
+            margin-top: 14px;
+            padding: 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            background: var(--card-bg);
+            color: var(--text-color);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            white-space: pre-wrap;
+            word-break: break-word;
+            min-height: 74px;
+        }
+
+        .hint {
+            margin-top: 6px;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="main-wrapper">
+        <div id="toastHost" class="toast-host" aria-live="polite" aria-relevant="additions"></div>
+
+        <header class="top-nav">
+            <div class="nav-left">
+                <a class="nav-brand" href="/">Softdebut Tools</a>
+                <nav class="nav-links" aria-label="Primary">
+                    <a class="nav-link" href="/">OpenProject</a>
+                    <a class="nav-link is-active" href="/app">WFH</a>
+                </nav>
+            </div>
+
+            <div class="nav-right"></div>
+        </header>
+
+        <div class="content-row">
+            <div class="panel" style="max-width: none;">
+                <header>
+                    <h2>WFH Automation</h2>
+                    <p>Run server-side Playwright steps for Debutservice</p>
+                </header>
+
+                <main>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="thaiName">ชื่อภาษาไทย</label>
+                            <input id="thaiName" type="text" placeholder="เช่น สมชาย ใจดี" />
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="engName">ชื่อภาษาอังกฤษ</label>
+                            <input id="engName" type="text" placeholder="e.g. John Doe" />
+                        </div>
+
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="email">อีเมล</label>
+                            <input id="email" type="text" placeholder="example@example.com" />
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="phone">เบอร์โทรศัพท์</label>
+                            <input id="phone" type="text" placeholder="0812345678" />
+                        </div>
+
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="department">แผนก/สังกัด</label>
+                            <input id="department" type="text" placeholder="e.g. Technology Division" />
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="because">เนื่องจาก</label>
+                            <input id="because" type="text" placeholder="เช่น ขอใช้สิทธิ์" />
+                        </div>
+
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="reason">เหตุผล</label>
+                            <input id="reason" type="text" placeholder="เช่น ขอใช้สิทธิ์" />
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="extra">ข้อมูลเพิ่มเติม</label>
+                            <input id="extra" type="text" placeholder="เช่น ขอใช้สิทธิ์" />
+                        </div>
+
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="startDate">วันที่เริ่ม (DD/MM/YYYY)</label>
+                            <input id="startDate" type="text" placeholder="DD/MM/YYYY (e.g. 27/05/2026)" />
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="endDate">วันที่สิ้นสุด (DD/MM/YYYY)</label>
+                            <input id="endDate" type="text" placeholder="DD/MM/YYYY (e.g. 27/05/2026)" />
+                        </div>
+                    </div>
+
+                    <div style="display:flex; align-items:center; gap:10px; margin-top: 14px;">
+                        <label style="display:flex; align-items:center; gap:8px; margin: 0; font-weight: 600;">
+                            <input id="dryRun" type="checkbox" checked />
+                            Dry run (no submit)
+                        </label>
+                    </div>
+
+                    <div class="btn-row">
+                        <button id="wfhSubmitBtn" type="button">Submit</button>
+                        <button id="wfhSaveBtn" type="button" class="btn-secondary">Save Information</button>
+                    </div>
+
+                    <div id="screenshotWrap" style="display:none; margin-top: 14px;">
+                        <label style="margin-bottom: 8px;">Screenshot (Dry Run)</label>
+                        <img id="screenshotImg" alt="Dry run screenshot" style="width: 100%; border-radius: 14px; border: 1px solid var(--border-color);" />
+                    </div>
+                </main>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app/app.js" defer></script>
+</body>
+
+</html>

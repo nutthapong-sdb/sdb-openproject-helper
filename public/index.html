@@ -63,10 +63,16 @@
 
 <body>
     <div class="main-wrapper">
-        <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
-            <h1 style="color: var(--primary-color); margin: 0; font-size: 1.8rem;">OpenProject Task Manager</h1>
+        <header class="top-nav">
+            <div class="nav-left">
+                <a class="nav-brand" href="/">Softdebut Tools</a>
+                <nav class="nav-links" aria-label="Primary">
+                    <a class="nav-link is-active" href="/">OpenProject</a>
+                    <a class="nav-link" href="/app">WFH</a>
+                </nav>
+            </div>
 
-            <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="nav-right">
                 <span id="userNameDisplay"
                     style="color: var(--text-color); font-weight: 500; font-size: 1rem; margin-right: 10px;">Loading...</span>
 

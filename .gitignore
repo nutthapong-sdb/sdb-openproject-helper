@@ -1,6 +1,27 @@
-node_modules
+node_modules/
+
+# Local env (keep .env.template tracked)
 .env
+.env.*
+!.env.template
+
+# Local databases
+*.db
+*.db-journal
+
+# Local debug artifacts / screenshots
+debug/
+public/debug/
+
+# Playwright artifacts (if generated)
+playwright-report/
+test-results/
+
+# Local test artifacts
+tests/.artifacts/
+
+# OS/editor
 .DS_Store
-*.log
-npm-debug.log*
-projects.db
+Thumbs.db
+.vscode/
+.idea/
