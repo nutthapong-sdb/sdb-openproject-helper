@@ -190,6 +190,7 @@ label {
 input[type="text"],
 input[type="url"],
 input[type="password"],
+input[type="date"],
 select {
     width: 100%;
     padding: 12px 16px;
@@ -235,6 +236,8 @@ select {
 
 input[type="text"]:focus,
 input[type="number"]:focus,
+input[type="password"]:focus,
+input[type="date"]:focus,
 select:focus {
     outline: none;
     border-color: var(--primary-color);
@@ -267,6 +270,31 @@ button:disabled {
     opacity: 0.7;
     cursor: not-allowed;
     transform: none;
+}
+
+/* WFH page grid */
+.wfh-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+
+.wfh-date-inline {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+
+@media (max-width: 860px) {
+    .wfh-date-inline {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 860px) {
+    .wfh-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 .btn-row {
@@ -333,9 +361,9 @@ button:disabled {
 }
 
 .toast-title span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
 }
 
 .toast-close {

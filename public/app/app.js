@@ -182,7 +182,6 @@ async function loadDefaults() {
 async function saveDefaults() {
     setBusy(true);
     setScreenshotPreview(null);
-    showToast({ type: 'info', title: 'Saving', body: 'Saving information...', ttlMs: 2500 });
 
     try {
         const res = await fetch('/api/wfh/defaults', {

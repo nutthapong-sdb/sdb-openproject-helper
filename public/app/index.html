@@ -53,7 +53,7 @@
                 </header>
 
                 <main>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+                    <div class="wfh-grid">
                         <div class="form-group" style="margin-bottom: 0;">
                             <label for="thaiName">ชื่อภาษาไทย</label>
                             <input id="thaiName" type="text" placeholder="เช่น สมชาย ใจดี" />
@@ -65,16 +65,16 @@
 
                         <div class="form-group" style="margin-bottom: 0;">
                             <label for="email">อีเมล</label>
-                            <input id="email" type="text" placeholder="example@example.com" />
+                            <input id="email" type="text" placeholder="example@example.com" inputmode="email" autocomplete="username" />
                         </div>
                         <div class="form-group" style="margin-bottom: 0;">
                             <label for="loginPassword">Password</label>
                             <div style="display:flex; gap:10px; align-items:center;">
-                                <input id="loginPassword" type="password" placeholder="Debutservice password" style="flex: 1;" disabled />
-                                <button id="toggleLoginPassword" type="button" class="btn-secondary" style="width:auto; padding:10px 12px; display:none;">Show</button>
+                                <input id="loginPassword" type="password" placeholder="Debutservice password" style="flex: 1;" disabled autocomplete="current-password" aria-describedby="loginPasswordHint" />
+                                <button id="changeLoginPassword" type="button" class="btn-secondary" style="width:auto; padding:10px 12px;">Change Password</button>
+                                <button id="toggleLoginPassword" type="button" class="btn-secondary" style="width:auto; padding:10px 12px; display:none;" aria-controls="loginPassword">Show</button>
                             </div>
-                            <button id="changeLoginPassword" type="button" class="btn-secondary" style="margin-top: 10px; width:auto; padding:10px 12px;">Change Password</button>
-                            <div class="hint">Password is saved per user, but never shown again after saving.</div>
+                            <div id="loginPasswordHint" class="hint">Password is saved per user, but never shown again after saving.</div>
                         </div>
                         <div class="form-group" style="margin-bottom: 0;">
                             <label for="phone">เบอร์โทรศัพท์</label>
@@ -157,18 +157,20 @@
                             <label for="reason">เหตุผล</label>
                             <input id="reason" type="text" placeholder="เช่น ขอใช้สิทธิ์" />
                         </div>
+
+                        <div class="wfh-date-inline">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="startDate">วันที่เริ่ม</label>
+                                <input id="startDate" type="date" required />
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="endDate">วันที่สิ้นสุด</label>
+                                <input id="endDate" type="date" required />
+                            </div>
+                        </div>
                         <div class="form-group" style="margin-bottom: 0;">
                             <label for="extra">ข้อมูลเพิ่มเติม</label>
                             <input id="extra" type="text" placeholder="เช่น ขอใช้สิทธิ์" />
-                        </div>
-
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label for="startDate">วันที่เริ่ม</label>
-                            <input id="startDate" type="date" />
-                        </div>
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label for="endDate">วันที่สิ้นสุด</label>
-                            <input id="endDate" type="date" />
                         </div>
                     </div>
 
