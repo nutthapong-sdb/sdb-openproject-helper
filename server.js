@@ -1139,8 +1139,8 @@ app.post('/api/wfh/defaults', (req, res) => {
             department: incoming.department || '',
             because: incoming.because || '',
             reason: incoming.reason || '',
-            startDate: incoming.startDate || '',
-            endDate: incoming.endDate || '',
+            startDate: '',
+            endDate: '',
             extra: incoming.extra || '',
             loginPassword: nextPasswordRaw ? nextPasswordRaw : (existing.loginPassword || ''),
         };
