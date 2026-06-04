@@ -217,9 +217,13 @@ async function loadDefaults() {
     } catch {
         // ignore
     } finally {
-        const todayIso = new Date().toISOString().split('T')[0];
-        if (!readValue('startDate')) setValue('startDate', todayIso);
-        if (!readValue('endDate')) setValue('endDate', todayIso);
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowIso = tomorrow.getFullYear() + '-' + 
+            String(tomorrow.getMonth() + 1).padStart(2, '0') + '-' + 
+            String(tomorrow.getDate()).padStart(2, '0');
+        if (!readValue('startDate')) setValue('startDate', tomorrowIso);
+        if (!readValue('endDate')) setValue('endDate', tomorrowIso);
     }
 }
 
