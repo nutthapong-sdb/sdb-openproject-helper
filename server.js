@@ -61,10 +61,15 @@ function getPlaywrightLaunchOptions() {
     const headless = String(process.env.PLAYWRIGHT_HEADLESS || 'true').toLowerCase() !== 'false';
     const slowMoRaw = process.env.PLAYWRIGHT_SLOWMO;
     const slowMo = slowMoRaw ? Number(slowMoRaw) : 0;
-    return {
+    const options = {
         headless,
         ...(Number.isFinite(slowMo) && slowMo > 0 ? { slowMo } : {})
     };
+    const execPath = process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH;
+    if (execPath) {
+        options.executablePath = execPath;
+    }
+    return options;
 }
 
 function getPlaywrightPostRunPauseMs() {
@@ -820,6 +825,14 @@ app.post('/api/automation/debutservice/work-from-home/add', async (req, res) => 
                 await page.waitForTimeout(800);
             }
 
+            // After save, verify we redirected away from the add form.
+            const currentUrl = page.url();
+            if (currentUrl.includes('/v2/form/work_from_home/add')) {
+                const alertText = await page.locator('.alert, .alert-danger, .invalid-feedback, #error-message').first().textContent().catch(() => '');
+                tlog(`Save failed: still on add form. Alert: ${alertText.trim()}`);
+                throw new Error(`Failed to save WFH request. Please check if all required fields (like department) are selected and valid. ${alertText.trim() ? `Page alert: ${alertText.trim()}` : ''}`);
+            }
+
             // After save, refresh and submit for approval.
             tlog('refresh page');
             await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => { });
@@ -1088,10 +1101,11 @@ app.get('/api/wfh/defaults', (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!row) return res.json({});
         try {
-            const parsed = JSON.parse(row.data);
+            const parsed = JSON.parse(row.data) || {};
+            const hasPassword = !!parsed.loginPassword;
             // Never return password to the client.
-            if (parsed && typeof parsed === 'object') delete parsed.loginPassword;
-            res.json(parsed);
+            delete parsed.loginPassword;
+            res.json({ ...parsed, hasPassword });
         } catch {
             res.json({});
         }

@@ -154,6 +154,45 @@ function currentFormData() {
     };
 }
 
+function updatePasswordStatus(hasPassword) {
+    const statusEl = $('passwordStatus');
+    const pwdInput = $('loginPassword');
+    if (!statusEl) return;
+    if (hasPassword) {
+        statusEl.innerHTML = '<span style="color: #77DD77; font-weight: bold;">(Already Set)</span>';
+        if (pwdInput) {
+            pwdInput.classList.remove('password-missing');
+            pwdInput.placeholder = 'Debutservice password';
+        }
+    } else {
+        statusEl.innerHTML = '<span style="color: #CF6679; font-weight: bold;">(Not Set - Action Required)</span>';
+        if (pwdInput) {
+            pwdInput.classList.add('password-missing');
+            pwdInput.placeholder = '⚠️ Please enter and save password!';
+        }
+    }
+}
+
+function showWfhModal(loading) {
+    const modal = $('wfhModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    if (loading) {
+        $('modalLoadingState').style.display = 'block';
+        $('modalSuccessState').style.display = 'none';
+        $('closeModalBtn').style.display = 'none';
+    } else {
+        $('modalLoadingState').style.display = 'none';
+        $('modalSuccessState').style.display = 'block';
+        $('closeModalBtn').style.display = 'block';
+    }
+}
+
+function hideWfhModal() {
+    const modal = $('wfhModal');
+    if (modal) modal.style.display = 'none';
+}
+
 async function loadDefaults() {
     try {
         const res = await fetch('/api/wfh/defaults');
@@ -174,8 +213,13 @@ async function loadDefaults() {
         setValue('startDate', dmyToIso(d.startDate) || d.startDate);
         setValue('endDate', dmyToIso(d.endDate) || d.endDate);
         setValue('extra', d.extra);
+        updatePasswordStatus(d.hasPassword);
     } catch {
         // ignore
+    } finally {
+        const todayIso = new Date().toISOString().split('T')[0];
+        if (!readValue('startDate')) setValue('startDate', todayIso);
+        if (!readValue('endDate')) setValue('endDate', todayIso);
     }
 }
 
@@ -203,6 +247,7 @@ async function saveDefaults() {
         setValue('loginPassword', '');
         setPasswordEditing(false);
         showToast({ type: 'success', title: 'Saved', body: 'Information saved for this user.' });
+        await loadDefaults();
     } catch (e) {
         showToast({ type: 'error', title: 'Save Failed', body: e && e.message ? e.message : String(e) });
     } finally {
@@ -210,10 +255,38 @@ async function saveDefaults() {
     }
 }
 
+function validateForm() {
+    const required = [
+        { id: 'thaiName', label: 'ชื่อภาษาไทย' },
+        { id: 'engName', label: 'ชื่อภาษาอังกฤษ' },
+        { id: 'email', label: 'อีเมล' },
+        { id: 'phone', label: 'เบอร์โทรศัพท์' },
+        { id: 'department', label: 'แผนก/สังกัด' },
+        { id: 'because', label: 'เนื่องจาก' },
+        { id: 'reason', label: 'เหตุผล' },
+        { id: 'startDate', label: 'วันที่เริ่ม' },
+        { id: 'endDate', label: 'วันที่สิ้นสุด' }
+    ];
+
+    for (const field of required) {
+        if (!readValue(field.id)) {
+            showToast({
+                type: 'error',
+                title: 'Validation Error',
+                body: `กรุณากรอกข้อมูลช่อง "${field.label}"`
+            });
+            const el = $(field.id);
+            if (el) el.focus();
+            return false;
+        }
+    }
+    return true;
+}
+
 async function submitWfh() {
+    if (!validateForm()) return;
     setBusy(true);
-    setScreenshotPreview(null);
-    showToast({ type: 'info', title: 'Submitting', body: 'Running WFH automation...', ttlMs: 3500 });
+    showWfhModal(true); // Open modal with spinner
 
     const dryRun = false;
 
@@ -233,10 +306,9 @@ async function submitWfh() {
 
         const data = await res.json().catch(() => null);
         const screenshotUrl = (data && data.screenshot) ? `${window.location.origin}${data.screenshot}` : null;
-        // Keep screenshot visible when the server returns one.
-        if (screenshotUrl) setScreenshotPreview(screenshotUrl);
 
         if (!res.ok || (data && data.ok === false)) {
+            hideWfhModal(); // Dismiss modal so user sees error
             showToast({
                 type: 'error',
                 title: 'WFH Failed',
@@ -247,14 +319,18 @@ async function submitWfh() {
             return;
         }
 
-        showToast({
-            type: 'success',
-            title: 'WFH Submitted',
-            body: data && data.finalUrl ? `Final URL: ${data.finalUrl}` : 'Done.',
-            linkHref: screenshotUrl || undefined,
-            linkText: data && data.screenshot ? 'Open screenshot' : undefined,
-        });
+        // Show successful process in modal
+        const successMsg = data && data.finalUrl ? `Final URL: ${data.finalUrl}` : 'Done.';
+        $('modalSuccessMsg').textContent = successMsg;
+        if (screenshotUrl) {
+            $('modalScreenshotImg').src = screenshotUrl;
+            $('modalScreenshotImg').style.display = 'inline-block';
+        } else {
+            $('modalScreenshotImg').style.display = 'none';
+        }
+        showWfhModal(false); // Switch to success state with screenshot at 50%
     } catch (e) {
+        hideWfhModal();
         showToast({ type: 'error', title: 'WFH Failed', body: e && e.message ? e.message : String(e) });
     } finally {
         setBusy(false);
@@ -270,13 +346,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (saveBtn) saveBtn.addEventListener('click', saveDefaults);
     if (submitBtn) submitBtn.addEventListener('click', submitWfh);
 
+    const closeBtn = $('closeModalBtn');
+    if (closeBtn) closeBtn.addEventListener('click', hideWfhModal);
+
+    window.addEventListener('click', (event) => {
+        const modal = $('wfhModal');
+        if (event.target === modal && $('modalLoadingState').style.display !== 'block') {
+            hideWfhModal();
+        }
+    });
+
     const changeBtn = $('changeLoginPassword');
     if (changeBtn) {
         changeBtn.addEventListener('click', () => {
             setPasswordEditing(true);
             setValue('loginPassword', '');
             const input = $('loginPassword');
-            if (input) input.focus();
+            if (input) {
+                input.focus();
+                input.classList.remove('password-missing');
+            }
         });
     }
 

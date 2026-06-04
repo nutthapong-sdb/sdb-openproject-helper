@@ -21,6 +21,8 @@ COPY package*.json ./
 # Install npm dependencies
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium
 RUN npm ci --only=production
 
 # Copy application source
@@ -47,6 +49,7 @@ EXPOSE 3001
 # Default DB Path (can be overridden by Env Var)
 ENV DB_FILE=/app/data/projects.db
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Add health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
