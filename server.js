@@ -1970,8 +1970,8 @@ function getRankingSettings() {
                 });
             }
             const today = new Date().toISOString().split('T')[0];
-            const activeStartDate = settings.startDate;
-            const activeEndDate = settings.mode === 'to_present' ? today : settings.endDate;
+            const activeStartDate = settings.mode === 'all' ? '' : settings.startDate;
+            const activeEndDate = settings.mode === 'all' ? '' : (settings.mode === 'to_present' ? today : settings.endDate);
             resolve({
                 ...settings,
                 activeStartDate,
@@ -2043,8 +2043,8 @@ app.post('/api/admin/ranking/settings', (req, res) => {
 
     db.get('SELECT role FROM users WHERE id = ? OR openproject_id = ?', [localUserId, localUserId], (err, userRow) => {
         const role = userRow ? userRow.role : 'user';
-        if (role !== 'root') {
-            return res.status(403).json({ error: 'Root permission required (เฉพาะ role Root เท่านั้นที่สามารถเปลี่ยนช่วงวันที่ได้)' });
+        if (role !== 'admin' && role !== 'root') {
+            return res.status(403).json({ error: 'Admin permission required (เฉพาะ role Admin ขึ้นไปเท่านั้นที่สามารถเปลี่ยนช่วงวันที่ได้)' });
         }
 
         const { startDate = '', endDate = '', mode = 'custom' } = req.body || {};

@@ -283,7 +283,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             if (badge) {
-                if (settings && (settings.activeStartDate || settings.activeEndDate)) {
+                if (settings && settings.mode === 'all') {
+                    badge.textContent = 'ทุกช่วงเวลา (All-time)';
+                    badge.style.display = 'inline-block';
+                } else if (settings && (settings.activeStartDate || settings.activeEndDate)) {
                     const startFmt = formatDateDisplay(settings.activeStartDate);
                     const endFmt = settings.mode === 'to_present' ? 'ปัจจุบัน' : formatDateDisplay(settings.activeEndDate);
                     if (startFmt && endFmt) {
@@ -295,7 +298,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                     badge.style.display = 'inline-block';
                 } else {
-                    badge.textContent = 'ทั้งหมด (All-time)';
+                    badge.textContent = 'ทุกช่วงเวลา (All-time)';
                     badge.style.display = 'inline-block';
                 }
             }
@@ -1127,35 +1130,50 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function updateRankingModeUI() {
-        const isRoot = currentUserRole === 'root';
-        if (currentRankingMode === 'to_present') {
+        const isAdmin = currentUserRole === 'admin' || currentUserRole === 'root';
+        
+        if (currentRankingMode === 'all') {
+            $('#rankingAllTimeBtn').css({ background: '#4CAF50', color: '#000', fontWeight: 'bold' }).html('✓ ทุกช่วงเวลา');
+            $('#rankingToPresentBtn').css({ background: '#007acc', color: '#fff', fontWeight: '500' }).html('จนถึงปัจจุบัน');
+            $('#rankingStartDateInput').val('').prop('disabled', true);
+            $('#rankingEndDateInput').val('').prop('disabled', true);
+            const noticeText = isAdmin 
+                ? 'โหมด: แสดงทุกช่วงเวลา (All-Time) ทั้งหมดที่มีในระบบ'
+                : 'โหมด: แสดงทุกช่วงเวลา (เฉพาะ Role Admin ขึ้นไปเท่านั้นที่สามารถเปลี่ยนได้)';
+            $('#rankingDateNotice').text(noticeText);
+        } else if (currentRankingMode === 'to_present') {
+            $('#rankingAllTimeBtn').css({ background: '#9c27b0', color: '#fff', fontWeight: '500' }).html('ทุกช่วงเวลา');
             $('#rankingToPresentBtn').css({ background: '#4CAF50', color: '#000', fontWeight: 'bold' }).html('✓ จนถึงปัจจุบัน');
             const today = new Date().toISOString().split('T')[0];
+            $('#rankingStartDateInput').prop('disabled', !isAdmin);
             $('#rankingEndDateInput').val(today).prop('disabled', true);
-            const noticeText = isRoot 
+            const noticeText = isAdmin 
                 ? 'โหมด: คำนวณตั้งแต่วันที่เริ่มต้น จนถึงวันปัจจุบัน (อัปเดตอัตโนมัติทุกวัน)'
-                : 'โหมด: คำนวณตั้งแต่วันที่เริ่มต้น จนถึงวันปัจจุบัน (เฉพาะ Role Root เท่านั้นที่สามารถเปลี่ยนได้)';
+                : 'โหมด: คำนวณตั้งแต่วันที่เริ่มต้น จนถึงวันปัจจุบัน (เฉพาะ Role Admin ขึ้นไปเท่านั้นที่สามารถเปลี่ยนได้)';
             $('#rankingDateNotice').text(noticeText);
         } else {
+            $('#rankingAllTimeBtn').css({ background: '#9c27b0', color: '#fff', fontWeight: '500' }).html('ทุกช่วงเวลา');
             $('#rankingToPresentBtn').css({ background: '#007acc', color: '#fff', fontWeight: '500' }).html('จนถึงปัจจุบัน');
-            $('#rankingEndDateInput').prop('disabled', !isRoot);
-            const noticeText = isRoot 
+            $('#rankingStartDateInput').prop('disabled', !isAdmin);
+            $('#rankingEndDateInput').prop('disabled', !isAdmin);
+            const noticeText = isAdmin 
                 ? 'โหมด: กำหนดช่วงวันที่เริ่มต้นและสิ้นสุดแบบกำหนดเอง'
-                : 'โหมด: กำหนดช่วงวันที่แบบกำหนดเอง (เฉพาะ Role Root เท่านั้นที่สามารถเปลี่ยนได้)';
+                : 'โหมด: กำหนดช่วงวันที่แบบกำหนดเอง (เฉพาะ Role Admin ขึ้นไปเท่านั้นที่สามารถเปลี่ยนได้)';
             $('#rankingDateNotice').text(noticeText);
         }
 
-        $('#rankingStartDateInput').prop('disabled', !isRoot);
-        $('#rankingToPresentBtn').prop('disabled', !isRoot).css('opacity', isRoot ? '1' : '0.5');
-        $('#saveRankingDateBtn').prop('disabled', !isRoot).css('opacity', isRoot ? '1' : '0.5');
+        $('#rankingAllTimeBtn').prop('disabled', !isAdmin).css('opacity', isAdmin ? '1' : '0.5');
+        $('#rankingToPresentBtn').prop('disabled', !isAdmin).css('opacity', isAdmin ? '1' : '0.5');
+        $('#saveRankingDateBtn').prop('disabled', !isAdmin).css('opacity', isAdmin ? '1' : '0.5');
     }
 
+    $('#rankingAllTimeBtn').on('click', function() {
+        currentRankingMode = currentRankingMode === 'all' ? 'custom' : 'all';
+        updateRankingModeUI();
+    });
+
     $('#rankingToPresentBtn').on('click', function() {
-        if (currentRankingMode === 'to_present') {
-            currentRankingMode = 'custom';
-        } else {
-            currentRankingMode = 'to_present';
-        }
+        currentRankingMode = currentRankingMode === 'to_present' ? 'custom' : 'to_present';
         updateRankingModeUI();
     });
 
