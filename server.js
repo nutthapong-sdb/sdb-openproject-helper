@@ -1954,20 +1954,110 @@ app.post('/api/sync-projects', async (req, res) => {
     }
 });
 
-// GET User Stats for Dashboard
-app.get('/api/users-stats', (req, res) => {
-    const query = `
-        SELECT 
-            COALESCE(u.name, a.name) as name, 
-            COALESCE(r.score, 0) as task_count
-        FROM local_assignees a 
-        LEFT JOIN ranking_scores r ON a.id = r.user_id 
-        LEFT JOIN users u ON u.openproject_id = a.id
-        ORDER BY task_count DESC, name ASC
-    `;
-    db.all(query, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
+function getRankingSettings() {
+    return new Promise((resolve) => {
+        db.all("SELECT key, value FROM meta WHERE key IN ('ranking_start_date', 'ranking_end_date', 'ranking_date_mode')", [], (err, rows) => {
+            const settings = {
+                startDate: '',
+                endDate: '',
+                mode: 'custom'
+            };
+            if (!err && rows) {
+                rows.forEach(r => {
+                    if (r.key === 'ranking_start_date') settings.startDate = r.value || '';
+                    if (r.key === 'ranking_end_date') settings.endDate = r.value || '';
+                    if (r.key === 'ranking_date_mode') settings.mode = r.value || 'custom';
+                });
+            }
+            const today = new Date().toISOString().split('T')[0];
+            const activeStartDate = settings.startDate;
+            const activeEndDate = settings.mode === 'to_present' ? today : settings.endDate;
+            resolve({
+                ...settings,
+                activeStartDate,
+                activeEndDate
+            });
+        });
+    });
+}
+
+// GET User Stats for Dashboard (Ranked by logged hours within active date range)
+app.get('/api/users-stats', async (req, res) => {
+    try {
+        const settings = await getRankingSettings();
+        const { activeStartDate, activeEndDate } = settings;
+
+        let dateCondition = '';
+        const params = [];
+
+        if (activeStartDate && activeEndDate) {
+            dateCondition = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) BETWEEN DATE(?) AND DATE(?)';
+            params.push(activeStartDate, activeEndDate);
+        } else if (activeStartDate) {
+            dateCondition = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) >= DATE(?)';
+            params.push(activeStartDate);
+        } else if (activeEndDate) {
+            dateCondition = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) <= DATE(?)';
+            params.push(activeEndDate);
+        }
+
+        const query = `
+            SELECT 
+                a.id as assignee_id,
+                COALESCE(u.name, a.name) as name, 
+                COALESCE(SUM(CAST(h.spent_hours AS REAL)), 0) as total_hours,
+                COUNT(h.id) as task_count
+            FROM local_assignees a 
+            LEFT JOIN users u ON u.openproject_id = a.id
+            LEFT JOIN task_history h ON (h.user_id = CAST(a.id AS TEXT) OR h.user_id = u.id) ${dateCondition}
+            GROUP BY a.id, a.name, u.name
+            ORDER BY total_hours DESC, task_count DESC, COALESCE(u.name, a.name) ASC
+        `;
+
+        db.all(query, params, (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({
+                settings,
+                users: rows || []
+            });
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET Ranking Settings (Public for authenticated dashboard users)
+app.get('/api/ranking/settings', async (req, res) => {
+    try {
+        const settings = await getRankingSettings();
+        res.json(settings);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// POST Admin Ranking Settings (Save global date range)
+app.post('/api/admin/ranking/settings', (req, res) => {
+    const localUserId = req.cookies.sdb_session;
+    if (!localUserId) return res.status(401).json({ error: "Unauthorized" });
+
+    db.get('SELECT role FROM users WHERE id = ? OR openproject_id = ?', [localUserId, localUserId], (err, userRow) => {
+        const role = userRow ? userRow.role : 'user';
+        if (role !== 'root') {
+            return res.status(403).json({ error: 'Root permission required (เฉพาะ role Root เท่านั้นที่สามารถเปลี่ยนช่วงวันที่ได้)' });
+        }
+
+        const { startDate = '', endDate = '', mode = 'custom' } = req.body || {};
+
+        db.serialize(() => {
+            db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('ranking_start_date', ?)", [startDate]);
+            db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('ranking_end_date', ?)", [endDate]);
+            db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('ranking_date_mode', ?)", [mode], async (err) => {
+                if (err) return res.status(500).json({ error: err.message });
+                const updated = await getRankingSettings();
+                res.json({ ok: true, settings: updated });
+            });
+        });
     });
 });
 

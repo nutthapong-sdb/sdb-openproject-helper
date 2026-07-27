@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', async () => {
-    // Global variable for current user ID (for history separation)
+    // Global variable for current user ID and role
     let currentUserId = null;
+    let currentUserRole = null;
 
     // Fetch User Info
     try {
@@ -8,6 +9,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (userRes.ok) {
             const userData = await userRes.json();
             currentUserId = userData.id; // Store user ID
+            currentUserRole = userData.role || 'user'; // Store user role
             const displayName = userData.firstName ? `${userData.firstName} ${userData.lastName}` : (userData.name || 'User');
             // Show OpenProject ID and Role in header
             const roleDisplay = userData.role ? `[${userData.role}]` : '';
@@ -251,15 +253,52 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     };
 
+    // Helper to format date display
+    const formatDateDisplay = (dateStr) => {
+        if (!dateStr) return '';
+        const parts = dateStr.split('-');
+        if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+        return dateStr;
+    };
+
     // Load User Stats
     const loadUserStats = async () => {
         const tbody = document.getElementById('usersStatsBody');
+        const badge = document.getElementById('rankingDateRangeBadge');
         if (!tbody) return;
 
         try {
             const response = await fetch('/api/users-stats');
             if (!response.ok) throw new Error('Failed to fetch stats');
-            const users = await response.json();
+            const data = await response.json();
+
+            let users = [];
+            let settings = null;
+
+            if (Array.isArray(data)) {
+                users = data;
+            } else {
+                users = data.users || [];
+                settings = data.settings || null;
+            }
+
+            if (badge) {
+                if (settings && (settings.activeStartDate || settings.activeEndDate)) {
+                    const startFmt = formatDateDisplay(settings.activeStartDate);
+                    const endFmt = settings.mode === 'to_present' ? 'ปัจจุบัน' : formatDateDisplay(settings.activeEndDate);
+                    if (startFmt && endFmt) {
+                        badge.textContent = `${startFmt} - ${endFmt}`;
+                    } else if (startFmt) {
+                        badge.textContent = `ตั้งแต่ ${startFmt}`;
+                    } else {
+                        badge.textContent = `ถึง ${endFmt}`;
+                    }
+                    badge.style.display = 'inline-block';
+                } else {
+                    badge.textContent = 'ทั้งหมด (All-time)';
+                    badge.style.display = 'inline-block';
+                }
+            }
 
             tbody.innerHTML = '';
 
@@ -273,10 +312,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             topUsers.forEach((u, index) => {
                 const rank = index + 1;
                 const tr = document.createElement('tr');
-                tr.className = `rank-row rank-${rank}`; // Helper class for CSS
+                tr.className = `rank-row rank-${rank}`;
 
                 let iconHtml = '';
-                // Allow Full Name Display (Wrap text)
                 let nameStyle = 'font-weight: 500; white-space: normal; word-break: break-word; font-size: 0.9rem; line-height: 1.2;';
 
                 if (rank === 1) {
@@ -291,6 +329,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     nameStyle += 'color: #cd7f32;';
                 }
 
+                const rawHours = parseFloat(u.total_hours || 0);
+                const displayHours = Number.isInteger(rawHours) ? rawHours.toString() : rawHours.toFixed(1);
+
                 tr.innerHTML = `
                     <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center; color: #888; font-weight: ${rank <= 3 ? 'bold' : 'normal'}; font-size: ${rank <= 3 ? '1.1rem' : '0.9rem'};">${rank}</td>
                     <td style="padding: 10px; border-bottom: 1px solid #333; display: flex; align-items: center;">
@@ -302,7 +343,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         </div>
                         <span style="${nameStyle}" title="${u.name}">${u.name || 'Unknown'}</span>
                     </td>
-                    <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; color: var(--primary-color); font-size: ${rank <= 3 ? '1.1rem' : '0.9rem'};">${u.task_count}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; color: var(--primary-color); font-size: ${rank <= 3 ? '1.1rem' : '0.9rem'};">${displayHours} ชม.</td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -1068,8 +1109,87 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
+    let currentRankingMode = 'custom';
+
+    async function loadAdminRankingSettings() {
+        try {
+            const res = await fetch('/api/ranking/settings');
+            if (!res.ok) return;
+            const settings = await res.json();
+            $('#rankingStartDateInput').val(settings.startDate || '');
+            $('#rankingEndDateInput').val(settings.endDate || '');
+            currentRankingMode = settings.mode || 'custom';
+
+            updateRankingModeUI();
+        } catch (e) {
+            console.error('Failed to load ranking settings:', e);
+        }
+    }
+
+    function updateRankingModeUI() {
+        const isRoot = currentUserRole === 'root';
+        if (currentRankingMode === 'to_present') {
+            $('#rankingToPresentBtn').css({ background: '#4CAF50', color: '#000', fontWeight: 'bold' }).html('✓ จนถึงปัจจุบัน');
+            const today = new Date().toISOString().split('T')[0];
+            $('#rankingEndDateInput').val(today).prop('disabled', true);
+            const noticeText = isRoot 
+                ? 'โหมด: คำนวณตั้งแต่วันที่เริ่มต้น จนถึงวันปัจจุบัน (อัปเดตอัตโนมัติทุกวัน)'
+                : 'โหมด: คำนวณตั้งแต่วันที่เริ่มต้น จนถึงวันปัจจุบัน (เฉพาะ Role Root เท่านั้นที่สามารถเปลี่ยนได้)';
+            $('#rankingDateNotice').text(noticeText);
+        } else {
+            $('#rankingToPresentBtn').css({ background: '#007acc', color: '#fff', fontWeight: '500' }).html('จนถึงปัจจุบัน');
+            $('#rankingEndDateInput').prop('disabled', !isRoot);
+            const noticeText = isRoot 
+                ? 'โหมด: กำหนดช่วงวันที่เริ่มต้นและสิ้นสุดแบบกำหนดเอง'
+                : 'โหมด: กำหนดช่วงวันที่แบบกำหนดเอง (เฉพาะ Role Root เท่านั้นที่สามารถเปลี่ยนได้)';
+            $('#rankingDateNotice').text(noticeText);
+        }
+
+        $('#rankingStartDateInput').prop('disabled', !isRoot);
+        $('#rankingToPresentBtn').prop('disabled', !isRoot).css('opacity', isRoot ? '1' : '0.5');
+        $('#saveRankingDateBtn').prop('disabled', !isRoot).css('opacity', isRoot ? '1' : '0.5');
+    }
+
+    $('#rankingToPresentBtn').on('click', function() {
+        if (currentRankingMode === 'to_present') {
+            currentRankingMode = 'custom';
+        } else {
+            currentRankingMode = 'to_present';
+        }
+        updateRankingModeUI();
+    });
+
+    $('#saveRankingDateBtn').on('click', async function() {
+        const startDate = $('#rankingStartDateInput').val();
+        const endDate = $('#rankingEndDateInput').val();
+        const mode = currentRankingMode;
+
+        try {
+            const res = await fetch('/api/admin/ranking/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ startDate, endDate, mode })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) throw new Error(data.error || 'Failed to save settings');
+
+            Swal.fire({
+                icon: 'success',
+                title: 'บันทึกช่วงวันที่สำเร็จ',
+                text: 'ระบบได้อัปเดตช่วงวันที่ Ranking สำหรับทุกคนแล้ว',
+                timer: 2000,
+                showConfirmButton: false
+            });
+
+            loadUserStats();
+        } catch (e) {
+            Swal.fire('Error', e.message, 'error');
+        }
+    });
+
     async function openAdminPanel() {
         $('#adminModal').fadeIn();
+        loadAdminRankingSettings();
         const tbody = $('#userListBody');
         tbody.html('<tr><td colspan="6" style="text-align:center; padding: 20px;">Loading users...</td></tr>');
 
