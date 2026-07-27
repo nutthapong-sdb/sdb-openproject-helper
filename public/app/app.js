@@ -113,6 +113,7 @@ function setPasswordEditing(enabled) {
     passwordEditing = !!enabled;
     const input = $('loginPassword');
     const toggleBtn = $('toggleLoginPassword');
+    const changeBtn = $('changeLoginPassword');
     if (input) {
         input.disabled = !passwordEditing;
         if (!passwordEditing) input.type = 'password';
@@ -120,6 +121,19 @@ function setPasswordEditing(enabled) {
     if (toggleBtn) {
         toggleBtn.style.display = passwordEditing ? '' : 'none';
         toggleBtn.textContent = 'Show';
+    }
+    if (changeBtn) {
+        if (passwordEditing) {
+            changeBtn.textContent = 'Confirm';
+            changeBtn.style.backgroundColor = '#2e7d32';
+            changeBtn.style.color = '#ffffff';
+            changeBtn.style.borderColor = '#2e7d32';
+        } else {
+            changeBtn.textContent = 'Change Password';
+            changeBtn.style.backgroundColor = '';
+            changeBtn.style.color = '';
+            changeBtn.style.borderColor = '';
+        }
     }
 }
 
@@ -332,7 +346,7 @@ async function submitWfh() {
         } else {
             $('modalScreenshotImg').style.display = 'none';
         }
-        showWfhModal(false); // Switch to success state with screenshot at 50%
+        showWfhModal(false); // Switch to success state with screenshot at 100%
     } catch (e) {
         hideWfhModal();
         showToast({ type: 'error', title: 'WFH Failed', body: e && e.message ? e.message : String(e) });
@@ -362,13 +376,34 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const changeBtn = $('changeLoginPassword');
     if (changeBtn) {
-        changeBtn.addEventListener('click', () => {
-            setPasswordEditing(true);
-            setValue('loginPassword', '');
-            const input = $('loginPassword');
-            if (input) {
-                input.focus();
-                input.classList.remove('password-missing');
+        changeBtn.addEventListener('click', async () => {
+            if (!passwordEditing) {
+                setPasswordEditing(true);
+                setValue('loginPassword', '');
+                const input = $('loginPassword');
+                if (input) {
+                    input.focus();
+                    input.classList.remove('password-missing');
+                }
+            } else {
+                const pwd = readValue('loginPassword');
+                if (pwd) {
+                    try {
+                        const res = await fetch('/api/wfh/defaults', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ ...currentFormData(), loginPassword: pwd })
+                        });
+                        if (res.ok) {
+                            showToast({ type: 'success', title: 'Password Saved', body: 'Debutservice password updated.' });
+                            updatePasswordStatus(true);
+                        }
+                    } catch (e) {
+                        console.error(e);
+                    }
+                }
+                setValue('loginPassword', '');
+                setPasswordEditing(false);
             }
         });
     }

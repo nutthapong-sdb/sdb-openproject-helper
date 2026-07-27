@@ -79,7 +79,8 @@ function getPlaywrightPostRunPauseMs() {
 }
 
 function isDebutserviceAdminLoginUrl(url) {
-    return typeof url === 'string' && url.includes('/admin/login.php');
+    if (typeof url !== 'string') return false;
+    return url.includes('/admin/login.php') || url.includes('/v2/login') || url.includes('/login');
 }
 
 async function maybeClickOkDialog(page) {
@@ -94,41 +95,27 @@ async function debutserviceLoginIfNeeded(page, { username, password, postLoginUr
     // If we already see the list URL content, don't do anything.
     if (!isDebutserviceAdminLoginUrl(page.url())) return { ok: true, didLogin: false };
 
-    await maybeClickOkDialog(page);
+    console.log(`[WFH-AUTO] attempting login for username: ${username} (pwd length: ${password ? password.length : 0})`);
 
-    const userCtl = page.locator('input[name="username"], input[name="user"], input[id*="user" i]').first();
-    // Legacy page sometimes has inputs without useful attributes.
-    const userCtlFallback = page.locator('xpath=//*[contains(normalize-space(),"Username")]/following::input[1]').first();
+    const userCtl = page.locator('#username, input[name="username"], input[name="_username"]').first();
+    const passCtl = page.locator('#password, input[type="password"], input[name="_password"]').first();
+    const submitBtn = page.locator('#mainLoginForm > button, button[type="submit"], input[type="submit"]').first();
 
-    const passCtl = page.locator('input[type="password"], input[name="password"], input[id*="pass" i]').first();
-    const passCtlFallback = page.locator('xpath=//*[contains(normalize-space(),"Password")]/following::input[1]').first();
-
-    const resolvedUserCtl = (await userCtl.count().catch(() => 0)) > 0 ? userCtl : userCtlFallback;
-    const resolvedPassCtl = (await passCtl.count().catch(() => 0)) > 0 ? passCtl : passCtlFallback;
-
-    if ((await resolvedUserCtl.count().catch(() => 0)) === 0 || (await resolvedPassCtl.count().catch(() => 0)) === 0) {
+    if ((await userCtl.count().catch(() => 0)) === 0 || (await passCtl.count().catch(() => 0)) === 0) {
         return { ok: false, error: 'Could not find login fields' };
     }
 
-    await resolvedUserCtl.fill(username);
-    await resolvedPassCtl.fill(password);
+    await userCtl.fill(username);
+    await passCtl.fill(password);
+    await submitBtn.click().catch(() => { });
 
-    const submit = page.getByRole('button', { name: /login|log in|sign in|\u0e40\u0e02\u0e49\u0e32\u0e2a\u0e39\u0e48\u0e23\u0e30\u0e1a\u0e1a/i })
-        .or(page.locator('input[type="submit"], button[type="submit"]'))
-        // Debutservice legacy login uses an image input button.
-        .or(page.locator('input[type="image"][src*="bt_login" i], input[type="image"][src$="/admin/images/bt_login.gif" i]'))
-        .or(page.getByText(/sign in/i))
-        .first();
+    await page.waitForTimeout(3000);
 
-    await Promise.all([
-        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => { }),
-        submit.click().catch(() => { })
-    ]);
-
-    await page.waitForTimeout(800);
-    if (postLoginUrl) {
-        await page.goto(postLoginUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    if (postLoginUrl && page.url() !== postLoginUrl) {
+        await page.goto(postLoginUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => { });
+        await page.waitForTimeout(1500);
     }
+
     if (isDebutserviceAdminLoginUrl(page.url())) {
         await maybeClickOkDialog(page);
         return { ok: false, error: 'Login failed (still on login page)' };
@@ -221,22 +208,25 @@ app.post('/api/automation/debutservice/login', async (req, res) => {
         let passField;
         let submitBtn;
 
-        if (currentUrl.includes('/admin/login.php')) {
-            userField = page.locator('input[name="username"], input[name="user"], input[id*="user" i], input[type="text"]').first();
-            passField = page.locator('input[type="password"], input[name="password"], input[id*="pass" i]').first();
-            submitBtn = page.locator('input[type="image"][src*="bt_login" i], input[type="image"][src$="/admin/images/bt_login.gif" i], button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Sign")').first();
+        if (isDebutserviceAdminLoginUrl(currentUrl)) {
+            userField = page.locator('#username, input[name="username"], input[name="user"], input[id*="user" i], input[type="text"]').first();
+            passField = page.locator('#password, input[type="password"], input[name="password"], input[id*="pass" i]').first();
+            submitBtn = page.locator('#mainLoginForm > button, input[type="image"][src*="bt_login" i], input[type="image"][src$="/admin/images/bt_login.gif" i], button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Sign")').first();
         } else {
-            userField = page.getByLabel(/email|username|user name/i)
+            userField = page.locator('#username')
+                .or(page.getByLabel(/email|username|user name/i))
                 .or(page.getByPlaceholder(/email|username|user name/i))
                 .or(page.locator('input[type="email"]'))
                 .or(page.locator('input[name="username"], input[name="email"], input[id*="user" i], input[id*="email" i]'))
                 .first();
-            passField = page.getByLabel(/password/i)
+            passField = page.locator('#password')
+                .or(page.getByLabel(/password/i))
                 .or(page.getByPlaceholder(/password/i))
                 .or(page.locator('input[type="password"]'))
                 .or(page.locator('input[name="password"], input[id*="pass" i]'))
                 .first();
-            submitBtn = page.getByRole('button', { name: /log in|login|sign in|submit/i })
+            submitBtn = page.locator('#mainLoginForm > button')
+                .or(page.getByRole('button', { name: /log in|login|sign in|submit/i }))
                 .or(page.locator('button[type="submit"]'))
                 .or(page.locator('form button'))
                 .first();
