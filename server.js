@@ -9,7 +9,7 @@ const bcrypt = require('bcrypt');
 puppeteer.use(StealthPlugin());
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3002;
 
 app.use(bodyParser.json());
 app.use(cookieParser());
@@ -887,6 +887,153 @@ app.post('/api/automation/debutservice/work-from-home/add', async (req, res) => 
     }
 });
 
+// GET Cached WFH Requests List
+app.get('/api/automation/debutservice/work-from-home/list', (req, res) => {
+    const session = getSession(req);
+    if (!session || !session.isValid) return res.status(401).json({ error: 'Not logged in' });
+
+    db.all("SELECT * FROM wfh_remote_requests ORDER BY rowid DESC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ ok: true, items: rows || [] });
+    });
+});
+
+// POST Re-pull / Scrape WFH Requests from Debutservice Tabulator Table
+app.post('/api/automation/debutservice/work-from-home/fetch', async (req, res) => {
+    const session = getSession(req);
+    if (!session || !session.isValid) return res.status(401).json({ error: 'Not logged in' });
+
+    const listUrl = 'https://debutservice.softdebut.com/v2/form/work_from_home';
+    const body = req.body || {};
+    const username = (body.email ? String(body.email) : '').trim();
+    let password = body.loginPassword ? String(body.loginPassword) : '';
+
+    if (!password) {
+        const userId = req.cookies.user_id || req.cookies.sdb_session;
+        const saved = await new Promise((resolve) => {
+            if (!userId) return resolve('');
+            db.get('SELECT data FROM wfh_form_defaults WHERE user_id = ?', [userId], (err, row) => {
+                if (err || !row || !row.data) return resolve('');
+                try {
+                    const parsed = JSON.parse(row.data);
+                    resolve(parsed && parsed.loginPassword ? String(parsed.loginPassword) : '');
+                } catch {
+                    resolve('');
+                }
+            });
+        });
+        password = saved;
+    }
+
+    const effectiveUsername = username || 'nutthapong.v@softdebut.com';
+
+    let browser;
+    let page;
+    try {
+        const chromium = await getPlaywrightChromium();
+        browser = await chromium.launch(getPlaywrightLaunchOptions());
+        const context = await browser.newContext();
+        page = await context.newPage();
+
+        await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+
+        if (isDebutserviceAdminLoginUrl(page.url())) {
+            const loginResult = await debutserviceLoginIfNeeded(page, {
+                username: effectiveUsername,
+                password,
+                postLoginUrl: listUrl
+            });
+            if (!loginResult.ok) {
+                await browser.close().catch(() => { });
+                return res.status(401).json({ ok: false, error: loginResult.error || 'Login failed (still on login page)' });
+            }
+        }
+
+        await page.waitForTimeout(3000);
+
+        // Scrape Tabulator rows
+        const scrapedRows = await page.evaluate(() => {
+            const rowEls = Array.from(document.querySelectorAll('#my-table .tabulator-row'));
+            return rowEls.map(row => {
+                const getCell = (f) => {
+                    const c = row.querySelector(`[tabulator-field="${f}"]`);
+                    return c ? c.innerText.trim() : '';
+                };
+                const detailLink = row.querySelector('[tabulator-field="details"] a');
+                return {
+                    detailUrl: detailLink ? detailLink.href : '',
+                    refNo: getCell('ref_no'),
+                    becauseOf: getCell('becauseof'),
+                    reason: getCell('reason'),
+                    startDate: getCell('startdate'),
+                    endDate: getCell('enddate'),
+                    description: getCell('description'),
+                    creatorName: getCell('creator_name'),
+                    status: getCell('status')
+                };
+            }).filter(item => item.refNo);
+        });
+
+        await browser.close().catch(() => { });
+
+        // Upsert into SQLite
+        const userId = req.cookies.user_id || req.cookies.sdb_session;
+        const now = new Date().toISOString();
+
+        await new Promise((resolve, reject) => {
+            db.serialize(() => {
+                const stmt = db.prepare(`
+                    INSERT INTO wfh_remote_requests 
+                    (ref_no, user_id, detail_url, because_of, reason, start_date, end_date, description, creator_name, status, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(ref_no) DO UPDATE SET
+                        detail_url=excluded.detail_url,
+                        because_of=excluded.because_of,
+                        reason=excluded.reason,
+                        start_date=excluded.start_date,
+                        end_date=excluded.end_date,
+                        description=excluded.description,
+                        creator_name=excluded.creator_name,
+                        status=excluded.status,
+                        updated_at=excluded.updated_at
+                `);
+
+                scrapedRows.forEach(r => {
+                    stmt.run([
+                        r.refNo,
+                        userId,
+                        r.detailUrl,
+                        r.becauseOf,
+                        r.reason,
+                        r.startDate,
+                        r.endDate,
+                        r.description,
+                        r.creatorName,
+                        r.status,
+                        now
+                    ]);
+                });
+                stmt.finalize((err) => {
+                    if (err) reject(err); else resolve();
+                });
+            });
+        });
+
+        db.all("SELECT * FROM wfh_remote_requests ORDER BY rowid DESC", [], (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({
+                ok: true,
+                count: scrapedRows.length,
+                lastUpdated: now,
+                items: rows || []
+            });
+        });
+    } catch (e) {
+        if (browser) await browser.close().catch(() => { });
+        res.status(500).json({ ok: false, error: e.message });
+    }
+});
+
 // Improved Puppeteer Fetch for Cloudflare Bypass
 async function puppeteerFetch(url, options = {}, specificApiKey = null, timeoutMs = 60000) {
     let browser = null;
@@ -1079,6 +1226,21 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS wfh_form_defaults (
         user_id TEXT PRIMARY KEY,
         data TEXT NOT NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    // Cached WFH requests scraped from Debutservice.
+    db.run(`CREATE TABLE IF NOT EXISTS wfh_remote_requests (
+        ref_no TEXT PRIMARY KEY,
+        user_id TEXT,
+        detail_url TEXT,
+        because_of TEXT,
+        reason TEXT,
+        start_date TEXT,
+        end_date TEXT,
+        description TEXT,
+        creator_name TEXT,
+        status TEXT,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 });

@@ -419,5 +419,353 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // WFH State & Filter Engine
+    let rawWfhItems = [];
+    let lastWfhUpdated = null;
+    let calendarYear = new Date().getFullYear();
+    let calendarMonth = new Date().getMonth(); // 0-indexed (0=Jan)
+    let activeViewMode = 'table';
+
+    const getFilteredWfhItems = () => {
+        const statusVal = ($('wfhFilterStatus')?.value || 'all').trim().toLowerCase();
+        const startVal = $('wfhFilterStartDate')?.value;
+        const endVal = $('wfhFilterEndDate')?.value;
+        const searchVal = ($('wfhFilterSearch')?.value || '').trim().toLowerCase();
+
+        return rawWfhItems.filter(item => {
+            // Status Filter
+            if (statusVal !== 'all') {
+                const itemSt = (item.status || '').trim().toLowerCase();
+                if (itemSt !== statusVal) return false;
+            }
+
+            // Date Range Filter
+            const itemStart = (item.start_date || '').slice(0, 10);
+            const itemEnd = (item.end_date || '').slice(0, 10);
+            if (startVal && itemEnd < startVal) return false;
+            if (endVal && itemStart > endVal) return false;
+
+            // Search Keyword
+            if (searchVal) {
+                const ref = (item.ref_no || '').toLowerCase();
+                const name = (item.creator_name || '').toLowerCase();
+                const because = (item.because_of || '').toLowerCase();
+                const reason = (item.reason || '').toLowerCase();
+                const desc = (item.description || '').toLowerCase();
+                if (!ref.includes(searchVal) && !name.includes(searchVal) && !because.includes(searchVal) && !reason.includes(searchVal) && !desc.includes(searchVal)) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+    };
+
+    // WFH Remote Table rendering
+    const renderWfhTable = (items, lastUpdated) => {
+        const tbody = $('wfhRemoteTbody');
+        const updatedLabel = $('wfhListLastUpdated');
+        if (!tbody) return;
+
+        if (updatedLabel && lastUpdated) {
+            const d = new Date(lastUpdated);
+            updatedLabel.textContent = `อัปเดตล่าสุด: ${d.toLocaleString('th-TH')}`;
+        }
+
+        if (!items || items.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 24px; color: var(--text-muted);">
+                        ไม่พบรายการ WFH (กดปุ่ม "ดึงข้อมูลใหม่ (Re-pull)" ด้านบนเพื่อดึงรายการจาก Debutservice)
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        const getStatusBadge = (st) => {
+            const s = (st || '').trim().toLowerCase();
+            let bg = '#777';
+            let color = '#fff';
+            if (s === 'approve') { bg = '#2e7d32'; color = '#fff'; }
+            else if (s === 'approval') { bg = '#f57c00'; color = '#fff'; }
+            else if (s === 'create') { bg = '#0288d1'; color = '#fff'; }
+            else if (s === 'reject') { bg = '#c62828'; color = '#fff'; }
+            else if (s === 'cancel') { bg = '#616161'; color = '#fff'; }
+
+            return `<span style="background: ${bg}; color: ${color}; padding: 3px 10px; border-radius: 12px; font-size: 0.78rem; font-weight: 600; display: inline-block;">${st || 'N/A'}</span>`;
+        };
+
+        const formatShortDate = (dtStr) => {
+            if (!dtStr) return '-';
+            return dtStr.replace(/\s+00:00:00$/, '');
+        };
+
+        tbody.innerHTML = items.map(item => {
+            const startShort = formatShortDate(item.start_date);
+            const endShort = formatShortDate(item.end_date);
+            const dateDisplay = startShort === endShort ? startShort : `${startShort} - ${endShort}`;
+            const detailBtn = item.detail_url 
+                ? `<a href="${item.detail_url}" target="_blank" class="btn-secondary" style="padding: 4px 10px; font-size: 0.8rem; text-decoration: none; display: inline-block;">ดูรายละเอียด ↗</a>`
+                : '-';
+
+            return `
+                <tr style="border-bottom: 1px solid var(--border-color, #333);">
+                    <td style="padding: 10px; font-weight: 600; color: var(--primary-color, #4CAF50);">${item.ref_no || '-'}</td>
+                    <td style="padding: 10px; white-space: nowrap;">${dateDisplay}</td>
+                    <td style="padding: 10px;">
+                        <div style="font-weight: 500;">${item.because_of || '-'} / ${item.reason || '-'}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">${item.description || ''}</div>
+                    </td>
+                    <td style="padding: 10px; white-space: nowrap;">${item.creator_name || '-'}</td>
+                    <td style="padding: 10px; text-align: center;">${getStatusBadge(item.status)}</td>
+                    <td style="padding: 10px; text-align: center;">${detailBtn}</td>
+                </tr>
+            `;
+        }).join('');
+    };
+
+    // Calendar Rendering Engine
+    const renderWfhCalendar = () => {
+        const gridBody = $('wfhCalendarGridBody');
+        const monthTitle = $('calMonthTitle');
+        const showAllTeam = $('wfhToggleShowAllTeam')?.checked ?? true;
+        if (!gridBody) return;
+
+        const dateObj = new Date(calendarYear, calendarMonth, 1);
+        const thaiMonthNames = [
+            'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+            'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+        ];
+        if (monthTitle) {
+            monthTitle.textContent = `${thaiMonthNames[calendarMonth]} ${calendarYear + 543}`;
+        }
+
+        const firstDayOfWeek = dateObj.getDay(); // 0 = Sun
+        const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+        const prevMonthDays = new Date(calendarYear, calendarMonth, 0).getDate();
+
+        const currentUserName = (readValue('thaiName') || '').trim();
+
+        let itemsForCalendar = getFilteredWfhItems();
+        if (!showAllTeam && currentUserName) {
+            itemsForCalendar = itemsForCalendar.filter(i => (i.creator_name || '').includes(currentUserName));
+        }
+
+        const todayObj = new Date();
+        const todayStr = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
+        let cellsHtml = '';
+
+        // Padding cells for previous month
+        for (let i = firstDayOfWeek - 1; i >= 0; i--) {
+            const dayNum = prevMonthDays - i;
+            cellsHtml += `
+                <div class="calendar-day-cell other-month">
+                    <div class="calendar-day-num">${dayNum}</div>
+                </div>
+            `;
+        }
+
+        // Current month cells
+        for (let day = 1; day <= daysInMonth; day++) {
+            const dayStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const isToday = dayStr === todayStr;
+
+            const dayEvents = itemsForCalendar.filter(item => {
+                const s = (item.start_date || '').slice(0, 10);
+                const e = (item.end_date || '').slice(0, 10);
+                return dayStr >= s && dayStr <= e;
+            });
+
+            let eventPillsHtml = '';
+            dayEvents.forEach(item => {
+                const stClass = `status-${(item.status || 'default').toLowerCase()}`;
+                const nameShort = (item.creator_name || 'User').split(' ')[0];
+                const titleAttr = `${item.ref_no || ''} | ${item.creator_name || ''} | ${item.because_of || ''} (${item.status || ''})`;
+                const hrefAttr = item.detail_url ? `onclick="window.open('${item.detail_url}', '_blank')"` : '';
+
+                eventPillsHtml += `
+                    <div class="cal-wfh-pill ${stClass}" title="${titleAttr}" ${hrefAttr}>
+                        <span>${nameShort}</span>
+                        <span style="opacity: 0.8; font-size: 0.7rem;">${item.status || ''}</span>
+                    </div>
+                `;
+            });
+
+            cellsHtml += `
+                <div class="calendar-day-cell ${isToday ? 'is-today' : ''}">
+                    <div class="calendar-day-num" style="${isToday ? 'color: var(--primary-color, #FF8F00);' : ''}">${day} ${isToday ? '• วันนี้' : ''}</div>
+                    ${eventPillsHtml}
+                </div>
+            `;
+        }
+
+        // Next month padding cells
+        const totalCellsSoFar = firstDayOfWeek + daysInMonth;
+        const remainder = totalCellsSoFar % 7;
+        if (remainder > 0) {
+            const nextPadding = 7 - remainder;
+            for (let day = 1; day <= nextPadding; day++) {
+                cellsHtml += `
+                    <div class="calendar-day-cell other-month">
+                        <div class="calendar-day-num">${day}</div>
+                    </div>
+                `;
+            }
+        }
+
+        gridBody.innerHTML = cellsHtml;
+    };
+
+    const refreshWfhViews = () => {
+        const filteredItems = getFilteredWfhItems();
+        renderWfhTable(filteredItems, lastWfhUpdated);
+        renderWfhCalendar();
+    };
+
+    const loadCachedWfhList = async () => {
+        try {
+            const res = await fetch('/api/automation/debutservice/work-from-home/list');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.ok) {
+                    rawWfhItems = data.items || [];
+                    lastWfhUpdated = rawWfhItems.length > 0 ? rawWfhItems[0].updated_at : null;
+                    refreshWfhViews();
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load cached WFH list:', e);
+        }
+    };
+
+    const triggerWfhRepull = async () => {
+        const btn = $('wfhRepullBtn');
+        const icon = $('wfhRepullIcon');
+        const text = $('wfhRepullText');
+        if (btn) btn.disabled = true;
+        if (icon) icon.textContent = '⏳';
+        if (text) text.textContent = 'กำลังดึงข้อมูล...';
+
+        try {
+            const res = await fetch('/api/automation/debutservice/work-from-home/fetch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(currentFormData())
+            });
+            const data = await res.json();
+
+            if (res.ok && data.ok) {
+                showToast({ type: 'success', title: 'Re-pull Success', body: `ดึงข้อมูลสำเร็จ ${data.count} รายการ` });
+                rawWfhItems = data.items || [];
+                lastWfhUpdated = data.lastUpdated;
+                refreshWfhViews();
+            } else {
+                showToast({ type: 'error', title: 'Re-pull Failed', body: data.error || 'Failed to fetch WFH records' });
+            }
+        } catch (e) {
+            console.error('Error re-pulling WFH data:', e);
+            showToast({ type: 'error', title: 'Error', body: e.message || 'Network error' });
+        } finally {
+            if (btn) btn.disabled = false;
+            if (icon) icon.textContent = '🔄';
+            if (text) text.textContent = 'ดึงข้อมูลใหม่ (Re-pull)';
+        }
+    };
+
+    // Event Listeners for Filters & Calendar Controls
+    const repullBtn = $('wfhRepullBtn');
+    if (repullBtn) repullBtn.addEventListener('click', triggerWfhRepull);
+
+    // View Switcher Handlers
+    const tableBtn = $('wfhViewTableBtn');
+    const calendarBtn = $('wfhViewCalendarBtn');
+    const tableView = $('wfhTableView');
+    const calendarView = $('wfhCalendarView');
+
+    if (tableBtn && calendarBtn) {
+        tableBtn.addEventListener('click', () => {
+            activeViewMode = 'table';
+            tableBtn.classList.add('active');
+            tableBtn.style.color = '#000';
+            calendarBtn.classList.remove('active');
+            calendarBtn.style.color = 'var(--text-muted)';
+            if (tableView) tableView.style.display = 'block';
+            if (calendarView) calendarView.style.display = 'none';
+        });
+
+        calendarBtn.addEventListener('click', () => {
+            activeViewMode = 'calendar';
+            calendarBtn.classList.add('active');
+            calendarBtn.style.color = '#000';
+            tableBtn.classList.remove('active');
+            tableBtn.style.color = 'var(--text-muted)';
+            if (calendarView) calendarView.style.display = 'block';
+            if (tableView) tableView.style.display = 'none';
+            renderWfhCalendar();
+        });
+    }
+
+    // Filter Controls Handlers
+    ['wfhFilterStatus', 'wfhFilterStartDate', 'wfhFilterEndDate', 'wfhFilterSearch'].forEach(id => {
+        const el = $(id);
+        if (el) {
+            el.addEventListener('input', refreshWfhViews);
+            el.addEventListener('change', refreshWfhViews);
+        }
+    });
+
+    const resetFilterBtn = $('wfhFilterResetBtn');
+    if (resetFilterBtn) {
+        resetFilterBtn.addEventListener('click', () => {
+            if ($('wfhFilterStatus')) $('wfhFilterStatus').value = 'all';
+            if ($('wfhFilterStartDate')) $('wfhFilterStartDate').value = '';
+            if ($('wfhFilterEndDate')) $('wfhFilterEndDate').value = '';
+            if ($('wfhFilterSearch')) $('wfhFilterSearch').value = '';
+            refreshWfhViews();
+        });
+    }
+
+    // Calendar Month Navigation Handlers
+    const prevMonthBtn = $('calPrevMonthBtn');
+    if (prevMonthBtn) {
+        prevMonthBtn.addEventListener('click', () => {
+            calendarMonth--;
+            if (calendarMonth < 0) {
+                calendarMonth = 11;
+                calendarYear--;
+            }
+            renderWfhCalendar();
+        });
+    }
+
+    const nextMonthBtn = $('calNextMonthBtn');
+    if (nextMonthBtn) {
+        nextMonthBtn.addEventListener('click', () => {
+            calendarMonth++;
+            if (calendarMonth > 11) {
+                calendarMonth = 0;
+                calendarYear++;
+            }
+            renderWfhCalendar();
+        });
+    }
+
+    const todayBtn = $('calTodayBtn');
+    if (todayBtn) {
+        todayBtn.addEventListener('click', () => {
+            const now = new Date();
+            calendarYear = now.getFullYear();
+            calendarMonth = now.getMonth();
+            renderWfhCalendar();
+        });
+    }
+
+    const teamToggle = $('wfhToggleShowAllTeam');
+    if (teamToggle) {
+        teamToggle.addEventListener('change', renderWfhCalendar);
+    }
+
     await loadDefaults();
+    await loadCachedWfhList();
 });
