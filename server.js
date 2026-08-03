@@ -898,58 +898,50 @@ app.get('/api/automation/debutservice/work-from-home/list', (req, res) => {
     });
 });
 
-// POST Re-pull / Scrape WFH Requests from Debutservice Tabulator Table
-app.post('/api/automation/debutservice/work-from-home/fetch', async (req, res) => {
-    const session = getSession(req);
-    if (!session || !session.isValid) return res.status(401).json({ error: 'Not logged in' });
-
+// Helper to scrape WFH requests for a single user account
+async function scrapeWfhRequestsForAccount(browser, username, password, userId) {
+    if (!username || !password) return [];
     const listUrl = 'https://debutservice.softdebut.com/v2/form/work_from_home';
-    const body = req.body || {};
-    const username = (body.email ? String(body.email) : '').trim();
-    let password = body.loginPassword ? String(body.loginPassword) : '';
-
-    if (!password) {
-        const userId = req.cookies.user_id || req.cookies.sdb_session;
-        const saved = await new Promise((resolve) => {
-            if (!userId) return resolve('');
-            db.get('SELECT data FROM wfh_form_defaults WHERE user_id = ?', [userId], (err, row) => {
-                if (err || !row || !row.data) return resolve('');
-                try {
-                    const parsed = JSON.parse(row.data);
-                    resolve(parsed && parsed.loginPassword ? String(parsed.loginPassword) : '');
-                } catch {
-                    resolve('');
-                }
-            });
-        });
-        password = saved;
-    }
-
-    const effectiveUsername = username || 'nutthapong.v@softdebut.com';
-
-    let browser;
-    let page;
+    const context = await browser.newContext();
+    const page = await context.newPage();
     try {
-        const chromium = await getPlaywrightChromium();
-        browser = await chromium.launch(getPlaywrightLaunchOptions());
-        const context = await browser.newContext();
-        page = await context.newPage();
-
         await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-
         if (isDebutserviceAdminLoginUrl(page.url())) {
             const loginResult = await debutserviceLoginIfNeeded(page, {
-                username: effectiveUsername,
+                username,
                 password,
                 postLoginUrl: listUrl
             });
             if (!loginResult.ok) {
-                await browser.close().catch(() => { });
-                return res.status(401).json({ ok: false, error: loginResult.error || 'Login failed (still on login page)' });
+                await context.close().catch(() => {});
+                return [];
             }
         }
+        await page.waitForTimeout(2000);
 
-        await page.waitForTimeout(3000);
+        // Reset filter status to All and clear filter text
+        const filterStatus = page.locator('#filterStatus');
+        if (await filterStatus.count() > 0) {
+            await filterStatus.selectOption('').catch(() => {});
+        }
+        const filterText = page.locator('#filterText');
+        if (await filterText.count() > 0) {
+            await filterText.fill('').catch(() => {});
+        }
+        const btnSearch = page.locator('#btnSearch');
+        if (await btnSearch.count() > 0) {
+            await btnSearch.click().catch(() => {});
+            await page.waitForTimeout(2000);
+        }
+
+        // Change Tabulator Page Size to All
+        const pageSizeSelect = page.locator('.tabulator-paginator select, select[aria-label="Page Size"], .tabulator-page-size select');
+        if (await pageSizeSelect.count() > 0) {
+            await pageSizeSelect.selectOption({ label: 'All' }).catch(async () => {
+                await pageSizeSelect.selectOption('true').catch(() => {});
+            });
+            await page.waitForTimeout(2000);
+        }
 
         // Scrape Tabulator rows
         const scrapedRows = await page.evaluate(() => {
@@ -974,10 +966,93 @@ app.post('/api/automation/debutservice/work-from-home/fetch', async (req, res) =
             }).filter(item => item.refNo);
         });
 
+        await context.close().catch(() => {});
+        return scrapedRows.map(r => ({ ...r, userId }));
+    } catch (err) {
+        console.error(`Error scraping WFH for user ${username}:`, err.message);
+        await context.close().catch(() => {});
+        return [];
+    }
+}
+
+// POST Re-pull / Scrape WFH Requests from Debutservice Tabulator Table
+app.post('/api/automation/debutservice/work-from-home/fetch', async (req, res) => {
+    const session = getSession(req);
+    if (!session || !session.isValid) return res.status(401).json({ error: 'Not logged in' });
+
+    const currentUserId = req.cookies.user_id || req.cookies.sdb_session;
+    const body = req.body || {};
+    let currentUsername = (body.email ? String(body.email) : '').trim();
+    let currentPassword = body.loginPassword ? String(body.loginPassword) : '';
+
+    // Gather accounts to scrape
+    const accountsToScrape = [];
+
+    if (!currentPassword && currentUserId) {
+        const saved = await new Promise((resolve) => {
+            db.get('SELECT data FROM wfh_form_defaults WHERE user_id = ?', [currentUserId], (err, row) => {
+                if (err || !row || !row.data) return resolve(null);
+                try {
+                    const parsed = JSON.parse(row.data);
+                    if (parsed && parsed.loginPassword) {
+                        resolve({ email: parsed.email || currentUsername, password: parsed.loginPassword });
+                    } else resolve(null);
+                } catch { resolve(null); }
+            });
+        });
+        if (saved) {
+            if (!currentUsername) currentUsername = saved.email;
+            currentPassword = saved.password;
+        }
+    }
+
+    if (!currentUsername) currentUsername = 'nutthapong.v@softdebut.com';
+    if (currentUsername && currentPassword) {
+        accountsToScrape.push({ username: currentUsername, password: currentPassword, userId: currentUserId });
+    }
+
+    // Also fetch all other saved user credentials from wfh_form_defaults
+    const savedDefaults = await new Promise((resolve) => {
+        db.all('SELECT user_id, data FROM wfh_form_defaults', [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+            const accs = [];
+            rows.forEach(r => {
+                try {
+                    const p = JSON.parse(r.data);
+                    if (p && p.email && p.loginPassword) {
+                        accs.push({ username: p.email, password: p.loginPassword, userId: r.user_id });
+                    }
+                } catch {}
+            });
+            resolve(accs);
+        });
+    });
+
+    savedDefaults.forEach(acc => {
+        if (!accountsToScrape.some(a => a.username.toLowerCase() === acc.username.toLowerCase())) {
+            accountsToScrape.push(acc);
+        }
+    });
+
+    let browser;
+    try {
+        const chromium = await getPlaywrightChromium();
+        browser = await chromium.launch(getPlaywrightLaunchOptions());
+
+        let allScrapedRows = [];
+
+        for (const acc of accountsToScrape) {
+            const rows = await scrapeWfhRequestsForAccount(browser, acc.username, acc.password, acc.userId);
+            rows.forEach(r => {
+                if (!allScrapedRows.some(existing => existing.refNo === r.refNo)) {
+                    allScrapedRows.push(r);
+                }
+            });
+        }
+
         await browser.close().catch(() => { });
 
         // Upsert into SQLite
-        const userId = req.cookies.user_id || req.cookies.sdb_session;
         const now = new Date().toISOString();
 
         await new Promise((resolve, reject) => {
@@ -998,10 +1073,10 @@ app.post('/api/automation/debutservice/work-from-home/fetch', async (req, res) =
                         updated_at=excluded.updated_at
                 `);
 
-                scrapedRows.forEach(r => {
+                allScrapedRows.forEach(r => {
                     stmt.run([
                         r.refNo,
-                        userId,
+                        r.userId || currentUserId,
                         r.detailUrl,
                         r.becauseOf,
                         r.reason,
@@ -1023,7 +1098,7 @@ app.post('/api/automation/debutservice/work-from-home/fetch', async (req, res) =
             if (err) return res.status(500).json({ error: err.message });
             res.json({
                 ok: true,
-                count: scrapedRows.length,
+                count: allScrapedRows.length,
                 lastUpdated: now,
                 items: rows || []
             });
