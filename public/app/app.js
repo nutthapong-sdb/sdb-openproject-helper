@@ -549,6 +549,51 @@ document.addEventListener('DOMContentLoaded', async () => {
         }).join('');
     };
 
+    const getMyCreatorNames = () => {
+        const names = new Set();
+        const thai = (readValue('thaiName') || '').trim().toLowerCase();
+        const eng = (readValue('engName') || '').trim().toLowerCase();
+        const email = (readValue('email') || '').trim().toLowerCase();
+        const emailPrefix = email ? email.split('@')[0] : '';
+
+        rawWfhItems.forEach(item => {
+            const creator = (item.creator_name || '').trim();
+            const creatorLower = creator.toLowerCase();
+            if (!creator) return;
+
+            let isMatch = false;
+            if (thai && (creatorLower.includes(thai) || thai.includes(creatorLower))) isMatch = true;
+            if (eng && (creatorLower.includes(eng) || eng.includes(creatorLower))) isMatch = true;
+            if (emailPrefix && creatorLower.includes(emailPrefix)) isMatch = true;
+
+            if (!isMatch) {
+                const tokens = [...thai.split(/\s+/), ...eng.split(/\s+/)].filter(t => t.length > 2);
+                for (const t of tokens) {
+                    if (creatorLower.includes(t)) {
+                        isMatch = true;
+                        break;
+                    }
+                }
+            }
+
+            if (isMatch) names.add(creator);
+        });
+
+        // Fallback: If no name matched but rawWfhItems has items
+        if (names.size === 0 && rawWfhItems.length > 0) {
+            const uniqueCreators = Array.from(new Set(rawWfhItems.map(i => (i.creator_name || '').trim()).filter(Boolean)));
+            if (emailPrefix) {
+                const found = uniqueCreators.find(c => c.toLowerCase().includes(emailPrefix));
+                if (found) names.add(found);
+            }
+            if (names.size === 0 && uniqueCreators.length > 0) {
+                names.add(uniqueCreators[0]);
+            }
+        }
+
+        return names;
+    };
+
     // Calendar Rendering Engine
     const renderWfhCalendar = () => {
         const gridBody = $('wfhCalendarGridBody');
@@ -569,11 +614,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
         const prevMonthDays = new Date(calendarYear, calendarMonth, 0).getDate();
 
-        const currentUserName = (readValue('thaiName') || '').trim();
-
         let itemsForCalendar = getFilteredWfhItems();
-        if (!showAllTeam && currentUserName) {
-            itemsForCalendar = itemsForCalendar.filter(i => (i.creator_name || '').includes(currentUserName));
+        if (!showAllTeam) {
+            const myCreators = getMyCreatorNames();
+            itemsForCalendar = itemsForCalendar.filter(i => myCreators.has((i.creator_name || '').trim()));
         }
 
         const todayObj = new Date();
