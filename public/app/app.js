@@ -707,7 +707,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Filter Controls Handlers
-    ['wfhFilterStatus', 'wfhFilterStartDate', 'wfhFilterEndDate', 'wfhFilterSearch'].forEach(id => {
+    ['wfhFilterStatus', 'wfhFilterStartDate', 'wfhFilterEndDate'].forEach(id => {
         const el = $(id);
         if (el) {
             el.addEventListener('input', refreshWfhViews);
@@ -721,7 +721,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             if ($('wfhFilterStatus')) $('wfhFilterStatus').value = 'all';
             if ($('wfhFilterStartDate')) $('wfhFilterStartDate').value = '';
             if ($('wfhFilterEndDate')) $('wfhFilterEndDate').value = '';
-            if ($('wfhFilterSearch')) $('wfhFilterSearch').value = '';
             refreshWfhViews();
         });
     }

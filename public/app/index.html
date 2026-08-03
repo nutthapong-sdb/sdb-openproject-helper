@@ -198,8 +198,9 @@
             <div class="nav-right"></div>
         </header>
 
-        <div class="content-row">
-            <div class="panel" style="max-width: none;">
+        <div class="content-row" style="display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+            <!-- Left Card: WFH Automation Form (30% Width) -->
+            <div class="panel" style="flex: 3; flex-basis: 30%; min-width: 320px; margin-top: 0;">
                 <header>
                     <h2>WFH Automation</h2>
                     <p>Run server-side Playwright steps for Debutservice</p>
@@ -334,15 +335,15 @@
                 </main>
             </div>
 
-            <!-- Panel 2: Debutservice WFH Requests Table & Calendar -->
-            <div class="panel" style="margin-top: 0; width: 100%; max-width: none;">
-                <header style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;">
+            <!-- Right Card: Debutservice WFH Requests Table & Calendar (70% Width) -->
+            <div class="panel" style="flex: 7; flex-basis: 70%; min-width: 500px; margin-top: 0;">
+                <header style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;">
                     <div>
                         <h2>รายการขอสิทธิ์ Work From Home (Debutservice)</h2>
                         <p id="wfhListLastUpdated" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 4px;">ยังไม่มีการดึงข้อมูลล่าสุด</p>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                        <!-- View Switcher -->
+                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto;">
+                        <!-- Mode Switcher Right Aligned at Top -->
                         <div style="display: inline-flex; background: rgba(0,0,0,0.3); padding: 3px; border-radius: 8px; border: 1px solid var(--border-color, #444);">
                             <button id="wfhViewTableBtn" type="button" class="view-mode-btn active" style="padding: 6px 14px; font-size: 0.85rem; border: none; border-radius: 6px; cursor: pointer;">📋 ตาราง</button>
                             <button id="wfhViewCalendarBtn" type="button" class="view-mode-btn" style="padding: 6px 14px; font-size: 0.85rem; border: none; border-radius: 6px; cursor: pointer; background: transparent; color: var(--text-muted);">📅 ปฏิทิน</button>
@@ -355,7 +356,7 @@
                 </header>
 
                 <main>
-                    <!-- Filter Toolbar -->
+                    <!-- Filter Toolbar (Status + Date Filter Only) -->
                     <div class="wfh-filter-bar">
                         <div style="display: flex; align-items: center; gap: 6px;">
                             <label for="wfhFilterStatus">สถานะ:</label>
@@ -374,10 +375,7 @@
                             <span style="color: var(--text-muted);">ถึง</span>
                             <input type="date" id="wfhFilterEndDate" title="End Date">
                         </div>
-                        <div style="display: flex; align-items: center; gap: 6px; flex: 1; min-width: 200px;">
-                            <input type="text" id="wfhFilterSearch" placeholder="ค้นหาเลขที่เอกสาร / ชื่อผู้ขอ / เหตุผล..." style="width: 100%;">
-                        </div>
-                        <button id="wfhFilterResetBtn" type="button" class="btn-secondary" style="padding: 6px 12px; font-size: 0.82rem;">ล้างตัวกรอง</button>
+                        <button id="wfhFilterResetBtn" type="button" class="btn-secondary" style="padding: 6px 12px; font-size: 0.82rem; margin-left: auto;">ล้างตัวกรอง</button>
                     </div>
 
                     <!-- Table View -->
