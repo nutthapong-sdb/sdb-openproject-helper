@@ -485,7 +485,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     };
 
-    // WFH Remote Table rendering
+    // WFH Remote Table rendering (Strictly shows logged-in user's own requests)
     const renderWfhTable = (items, lastUpdated) => {
         const tbody = $('wfhRemoteTbody');
         const updatedLabel = $('wfhListLastUpdated');
@@ -496,11 +496,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             updatedLabel.textContent = `อัปเดตล่าสุด: ${d.toLocaleString('th-TH')}`;
         }
 
-        if (!items || items.length === 0) {
+        // Filter table items to display ONLY the logged-in user's own requests
+        const myCreators = getMyCreatorNames();
+        const myTableItems = (items || []).filter(i => myCreators.has((i.creator_name || '').trim()));
+
+        if (!myTableItems || myTableItems.length === 0) {
             tbody.innerHTML = `
                 <tr>
                     <td colspan="6" style="text-align: center; padding: 24px; color: var(--text-muted);">
-                        ไม่พบรายการ WFH (กดปุ่ม "ดึงข้อมูลใหม่ (Re-pull)" ด้านบนเพื่อดึงรายการจาก Debutservice)
+                        ไม่พบรายการ WFH ของคุณ (กดปุ่ม "ดึงข้อมูลใหม่ (Re-pull)" ด้านบนเพื่อดึงรายการจาก Debutservice)
                     </td>
                 </tr>
             `;
@@ -525,7 +529,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return dtStr.replace(/\s+00:00:00$/, '');
         };
 
-        tbody.innerHTML = items.map(item => {
+        tbody.innerHTML = myTableItems.map(item => {
             const startShort = formatShortDate(item.start_date);
             const endShort = formatShortDate(item.end_date);
             const dateDisplay = startShort === endShort ? startShort : `${startShort} - ${endShort}`;
@@ -806,6 +810,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const calendarBtn = $('wfhViewCalendarBtn');
     const tableView = $('wfhTableView');
     const calendarView = $('wfhCalendarView');
+    const creatorFilterWrap = $('wfhFilterCreatorContainer');
+
+    // Initially hide creator filter in Table mode (since Table mode only shows logged-in user's own requests)
+    if (creatorFilterWrap) creatorFilterWrap.style.display = 'none';
 
     if (tableBtn && calendarBtn) {
         tableBtn.addEventListener('click', () => {
@@ -814,6 +822,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             calendarBtn.classList.remove('active');
             if (tableView) tableView.style.display = 'block';
             if (calendarView) calendarView.style.display = 'none';
+            if (creatorFilterWrap) creatorFilterWrap.style.display = 'none';
         });
 
         calendarBtn.addEventListener('click', () => {
@@ -822,6 +831,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             tableBtn.classList.remove('active');
             if (calendarView) calendarView.style.display = 'block';
             if (tableView) tableView.style.display = 'none';
+            if (creatorFilterWrap) creatorFilterWrap.style.display = 'flex';
             renderWfhCalendar();
         });
     }
