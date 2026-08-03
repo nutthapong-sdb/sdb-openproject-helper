@@ -260,7 +260,7 @@
                         <div style="display: flex; gap: 12px; width: 100%;">
                             <div class="form-group" style="flex: 1; min-width: 0; margin-bottom: 0;">
                                 <label for="phone">เบอร์โทรศัพท์</label>
-                                <input id="phone" type="text" placeholder="0812345678" style="width: 100%; box-sizing: border-box;" />
+                                <input id="phone" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="0812345678" style="width: 100%; box-sizing: border-box;" />
                             </div>
                             <div class="form-group" style="flex: 1; min-width: 0; margin-bottom: 0;">
                                 <label for="department">แผนก/สังกัด</label>
@@ -343,22 +343,22 @@
                             </div>
                         </div>
 
-                        <!-- Row 6: วันที่เริ่ม-สิ้นสุด (50%) + ข้อมูลเพิ่มเติม (50%) -->
+                        <!-- Row 6: วันที่เริ่ม (50%) + วันที่สิ้นสุด (50%) -->
                         <div style="display: flex; gap: 12px; width: 100%;">
-                            <div class="wfh-date-inline" style="flex: 1; min-width: 0; display: flex; gap: 6px; margin-bottom: 0;">
-                                <div class="form-group" style="flex: 1; margin-bottom: 0; min-width: 0;">
-                                    <label for="startDate">วันที่เริ่ม</label>
-                                    <input id="startDate" type="date" required style="width: 100%; box-sizing: border-box; min-width: 0;" />
-                                </div>
-                                <div class="form-group" style="flex: 1; margin-bottom: 0; min-width: 0;">
-                                    <label for="endDate">วันที่สิ้นสุด</label>
-                                    <input id="endDate" type="date" required style="width: 100%; box-sizing: border-box; min-width: 0;" />
-                                </div>
+                            <div class="form-group" style="flex: 1; margin-bottom: 0; min-width: 0;">
+                                <label for="startDate">วันที่เริ่ม</label>
+                                <input id="startDate" type="date" required style="width: 100%; box-sizing: border-box;" />
                             </div>
-                            <div class="form-group" style="flex: 1; min-width: 0; margin-bottom: 0;">
-                                <label for="extra">ข้อมูลเพิ่มเติม</label>
-                                <input id="extra" type="text" placeholder="เช่น ขอใช้สิทธิ์" style="width: 100%; box-sizing: border-box;" />
+                            <div class="form-group" style="flex: 1; margin-bottom: 0; min-width: 0;">
+                                <label for="endDate">วันที่สิ้นสุด</label>
+                                <input id="endDate" type="date" required style="width: 100%; box-sizing: border-box;" />
                             </div>
+                        </div>
+
+                        <!-- Row 7: ข้อมูลเพิ่มเติม (100% Full Width) -->
+                        <div class="form-group" style="margin-bottom: 0; width: 100%;">
+                            <label for="extra">ข้อมูลเพิ่มเติม</label>
+                            <input id="extra" type="text" placeholder="เช่น ขอใช้สิทธิ์" style="width: 100%; box-sizing: border-box;" />
                         </div>
                     </div>
 
@@ -391,7 +391,7 @@
                 </header>
 
                 <main>
-                    <!-- Filter Toolbar (Status + Date Filter Right Aligned) -->
+                    <!-- Filter Toolbar (Status + Creator + Date Filter Right Aligned) -->
                     <div class="wfh-filter-bar" style="display: flex; justify-content: flex-end; align-items: center; gap: 14px; flex-wrap: wrap;">
                         <div style="display: flex; align-items: center; gap: 6px; white-space: nowrap;">
                             <label for="wfhFilterStatus" style="white-space: nowrap;">สถานะ:</label>
@@ -402,6 +402,12 @@
                                 <option value="Create">Create</option>
                                 <option value="Reject">Reject</option>
                                 <option value="Cancel">Cancel</option>
+                            </select>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; white-space: nowrap;">
+                            <label for="wfhFilterCreator" style="white-space: nowrap;">ผู้ขอสิทธิ์:</label>
+                            <select id="wfhFilterCreator">
+                                <option value="all">ทั้งหมด (All)</option>
                             </select>
                         </div>
                         <div style="display: flex; align-items: center; gap: 6px; white-space: nowrap;">

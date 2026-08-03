@@ -426,8 +426,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     let calendarMonth = new Date().getMonth(); // 0-indexed (0=Jan)
     let activeViewMode = 'table';
 
+    const updateCreatorFilterOptions = () => {
+        const creatorSelect = $('wfhFilterCreator');
+        if (!creatorSelect) return;
+        const currentVal = creatorSelect.value || 'all';
+
+        const creators = Array.from(new Set(rawWfhItems.map(i => (i.creator_name || '').trim()).filter(Boolean))).sort();
+
+        creatorSelect.innerHTML = `<option value="all">ทั้งหมด (All)</option>` +
+            creators.map(c => `<option value="${c}">${c}</option>`).join('');
+
+        if (creators.includes(currentVal)) {
+            creatorSelect.value = currentVal;
+        } else {
+            creatorSelect.value = 'all';
+        }
+    };
+
     const getFilteredWfhItems = () => {
         const statusVal = ($('wfhFilterStatus')?.value || 'all').trim().toLowerCase();
+        const creatorVal = ($('wfhFilterCreator')?.value || 'all').trim().toLowerCase();
         const startVal = $('wfhFilterStartDate')?.value;
         const endVal = $('wfhFilterEndDate')?.value;
         const searchVal = ($('wfhFilterSearch')?.value || '').trim().toLowerCase();
@@ -437,6 +455,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (statusVal !== 'all') {
                 const itemSt = (item.status || '').trim().toLowerCase();
                 if (itemSt !== statusVal) return false;
+            }
+
+            // Creator Filter
+            if (creatorVal !== 'all') {
+                const itemCreator = (item.creator_name || '').trim().toLowerCase();
+                if (itemCreator !== creatorVal) return false;
             }
 
             // Date Range Filter
@@ -618,6 +642,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     const refreshWfhViews = () => {
+        updateCreatorFilterOptions();
         const filteredItems = getFilteredWfhItems();
         renderWfhTable(filteredItems, lastWfhUpdated);
         renderWfhCalendar();
@@ -757,8 +782,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // Phone Input Numeric-Only Restriction
+    const phoneInput = $('phone');
+    if (phoneInput) {
+        phoneInput.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/\D/g, '');
+        });
+    }
+
     // Filter Controls Handlers
-    ['wfhFilterStatus', 'wfhFilterStartDate', 'wfhFilterEndDate'].forEach(id => {
+    ['wfhFilterStatus', 'wfhFilterCreator', 'wfhFilterStartDate', 'wfhFilterEndDate'].forEach(id => {
         const el = $(id);
         if (el) {
             el.addEventListener('input', refreshWfhViews);
@@ -770,6 +803,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (resetFilterBtn) {
         resetFilterBtn.addEventListener('click', () => {
             if ($('wfhFilterStatus')) $('wfhFilterStatus').value = 'all';
+            if ($('wfhFilterCreator')) $('wfhFilterCreator').value = 'all';
             if ($('wfhFilterStartDate')) $('wfhFilterStartDate').value = '';
             if ($('wfhFilterEndDate')) $('wfhFilterEndDate').value = '';
             refreshWfhViews();
