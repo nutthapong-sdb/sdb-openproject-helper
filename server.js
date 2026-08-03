@@ -887,6 +887,12 @@ app.post('/api/automation/debutservice/work-from-home/add', async (req, res) => 
     }
 });
 
+let lastWfhSyncLogs = {
+    lastUpdated: null,
+    totalAccountsAttempted: 0,
+    accountLogs: []
+};
+
 // GET Cached WFH Requests List
 app.get('/api/automation/debutservice/work-from-home/list', (req, res) => {
     const session = getSession(req);
@@ -894,7 +900,7 @@ app.get('/api/automation/debutservice/work-from-home/list', (req, res) => {
 
     db.all("SELECT * FROM wfh_remote_requests ORDER BY rowid DESC", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json({ ok: true, items: rows || [] });
+        res.json({ ok: true, items: rows || [], syncLogs: lastWfhSyncLogs });
     });
 });
 
@@ -914,7 +920,7 @@ async function scrapeWfhRequestsForAccount(browser, username, password, userId) 
             });
             if (!loginResult.ok) {
                 await context.close().catch(() => {});
-                return [];
+                throw new Error(loginResult.error || 'Login failed');
             }
         }
         await page.waitForTimeout(2000);
@@ -971,7 +977,7 @@ async function scrapeWfhRequestsForAccount(browser, username, password, userId) 
     } catch (err) {
         console.error(`Error scraping WFH for user ${username}:`, err.message);
         await context.close().catch(() => {});
-        return [];
+        throw err;
     }
 }
 
@@ -1061,20 +1067,44 @@ app.post('/api/automation/debutservice/work-from-home/fetch', async (req, res) =
         browser = await chromium.launch(getPlaywrightLaunchOptions());
 
         let allScrapedRows = [];
+        const accountLogs = [];
 
         for (const acc of accountsToScrape) {
-            const rows = await scrapeWfhRequestsForAccount(browser, acc.username, acc.password, acc.userId);
-            rows.forEach(r => {
-                if (!allScrapedRows.some(existing => existing.refNo === r.refNo)) {
-                    allScrapedRows.push(r);
-                }
-            });
+            try {
+                const rows = await scrapeWfhRequestsForAccount(browser, acc.username, acc.password, acc.userId);
+                rows.forEach(r => {
+                    if (!allScrapedRows.some(existing => existing.refNo === r.refNo)) {
+                        allScrapedRows.push(r);
+                    }
+                });
+                accountLogs.push({
+                    username: acc.username,
+                    userId: acc.userId,
+                    status: 'success',
+                    count: rows.length,
+                    error: null
+                });
+            } catch (accErr) {
+                accountLogs.push({
+                    username: acc.username,
+                    userId: acc.userId,
+                    status: 'error',
+                    count: 0,
+                    error: accErr.message || String(accErr)
+                });
+            }
         }
 
         await browser.close().catch(() => { });
 
         // Upsert into SQLite
         const now = new Date().toISOString();
+
+        lastWfhSyncLogs = {
+            lastUpdated: now,
+            totalAccountsAttempted: accountsToScrape.length,
+            accountLogs
+        };
 
         await new Promise((resolve, reject) => {
             db.serialize(() => {
@@ -1121,6 +1151,7 @@ app.post('/api/automation/debutservice/work-from-home/fetch', async (req, res) =
                 ok: true,
                 count: allScrapedRows.length,
                 lastUpdated: now,
+                syncLogs: lastWfhSyncLogs,
                 items: rows || []
             });
         });

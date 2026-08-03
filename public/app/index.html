@@ -464,6 +464,37 @@
                         </div>
                         <div id="wfhCalendarGridBody" class="calendar-grid-body">
                             <!-- Generated dynamically by app.js -->
+                    </div>
+
+                    <!-- Admin & Sync Logs Container -->
+                    <div id="wfhSyncLogsCard" style="background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border-color, #444); border-radius: 8px; padding: 12px; margin-top: 18px;">
+                        <div id="wfhSyncLogsHeader" style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none;">
+                            <div style="font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 8px;">
+                                <span>📊 รายงาน Log การดึงข้อมูลตาม User (Admin Sync Logs)</span>
+                                <span id="wfhSyncBadge" style="background: #0288d1; color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem;">0 Accounts</span>
+                            </div>
+                            <span id="wfhSyncLogsChevron" style="font-size: 0.8rem; color: var(--text-muted);">▲ ซ่อน Log</span>
+                        </div>
+                        
+                        <div id="wfhSyncLogsContent" style="display: block; margin-top: 10px; border-top: 1px dashed var(--border-color, #444); padding-top: 10px;">
+                            <div id="wfhSyncLogSummary" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px;">
+                                ยังไม่มีข้อมูล Log การดึงล่าสุด (กดปุ่ม "ดึงข้อมูลใหม่ (Re-pull)" เพื่อรันการดึงข้อมูลตามบัญชีผู้ใช้)
+                            </div>
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; text-align: left;">
+                                    <thead>
+                                        <tr style="border-bottom: 1px solid var(--border-color, #444); color: var(--text-muted);">
+                                            <th style="padding: 6px;">User Email</th>
+                                            <th style="padding: 6px;">สถานะ</th>
+                                            <th style="padding: 6px;">จำนวนรายการที่ดึงได้</th>
+                                            <th style="padding: 6px;">หมายเหตุ / Error</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="wfhSyncLogsTableBody">
+                                        <tr><td colspan="4" style="padding: 10px; text-align: center; color: var(--text-muted);">ยังไม่มี Log การดึงข้อมูล</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </main>

@@ -623,6 +623,48 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderWfhCalendar();
     };
 
+    let currentSyncLogs = null;
+
+    const renderSyncLogs = (logs) => {
+        if (logs) currentSyncLogs = logs;
+        const badge = $('wfhSyncBadge');
+        const summary = $('wfhSyncLogSummary');
+        const tbody = $('wfhSyncLogsTableBody');
+        if (!tbody) return;
+
+        if (!currentSyncLogs || !currentSyncLogs.accountLogs || currentSyncLogs.accountLogs.length === 0) {
+            if (badge) badge.textContent = '0 Accounts';
+            if (summary) summary.textContent = 'ยังไม่มีข้อมูล Log การดึงล่าสุด (กดปุ่ม "ดึงข้อมูลใหม่ (Re-pull)" เพื่อรันการดึงข้อมูลตามบัญชีผู้ใช้)';
+            tbody.innerHTML = `<tr><td colspan="4" style="padding: 10px; text-align: center; color: var(--text-muted);">ยังไม่มี Log การดึงข้อมูล</td></tr>`;
+            return;
+        }
+
+        const count = currentSyncLogs.totalAccountsAttempted || currentSyncLogs.accountLogs.length;
+        if (badge) badge.textContent = `${count} Accounts`;
+
+        if (summary && currentSyncLogs.lastUpdated) {
+            const d = new Date(currentSyncLogs.lastUpdated);
+            summary.textContent = `การดึงข้อมูลล่าสุดเมื่อ ${d.toLocaleString('th-TH')} พบทั้งหมด ${count} บัญชีผู้ใช้ในระบบ`;
+        }
+
+        tbody.innerHTML = currentSyncLogs.accountLogs.map(acc => {
+            const isSuccess = acc.status === 'success';
+            const statusBadge = isSuccess
+                ? `<span style="background: #2e7d32; color: #fff; padding: 2px 8px; border-radius: 10px; font-weight: 600;">🟢 สำเร็จ</span>`
+                : `<span style="background: #c62828; color: #fff; padding: 2px 8px; border-radius: 10px; font-weight: 600;">🔴 ผิดพลาด</span>`;
+            const errorMsg = acc.error ? `<span style="color: #ff8a80;">${acc.error}</span>` : '-';
+
+            return `
+                <tr style="border-bottom: 1px solid var(--border-color, #333);">
+                    <td style="padding: 8px; font-weight: 600; color: var(--primary-color, #4CAF50);">${acc.username || '-'}</td>
+                    <td style="padding: 8px; white-space: nowrap;">${statusBadge}</td>
+                    <td style="padding: 8px; font-weight: 600;">${acc.count || 0} รายการ</td>
+                    <td style="padding: 8px;">${errorMsg}</td>
+                </tr>
+            `;
+        }).join('');
+    };
+
     const loadCachedWfhList = async () => {
         try {
             const res = await fetch('/api/automation/debutservice/work-from-home/list');
@@ -632,6 +674,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     rawWfhItems = data.items || [];
                     lastWfhUpdated = rawWfhItems.length > 0 ? rawWfhItems[0].updated_at : null;
                     refreshWfhViews();
+                    if (data.syncLogs) renderSyncLogs(data.syncLogs);
                 }
             }
         } catch (e) {
@@ -660,6 +703,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 rawWfhItems = data.items || [];
                 lastWfhUpdated = data.lastUpdated;
                 refreshWfhViews();
+                if (data.syncLogs) renderSyncLogs(data.syncLogs);
             } else {
                 showToast({ type: 'error', title: 'Re-pull Failed', body: data.error || 'Failed to fetch WFH records' });
             }
@@ -676,6 +720,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Event Listeners for Filters & Calendar Controls
     const repullBtn = $('wfhRepullBtn');
     if (repullBtn) repullBtn.addEventListener('click', triggerWfhRepull);
+
+    const logsHeader = $('wfhSyncLogsHeader');
+    const logsContent = $('wfhSyncLogsContent');
+    const logsChevron = $('wfhSyncLogsChevron');
+    if (logsHeader && logsContent) {
+        logsHeader.addEventListener('click', () => {
+            const isHidden = logsContent.style.display === 'none';
+            logsContent.style.display = isHidden ? 'block' : 'none';
+            if (logsChevron) logsChevron.textContent = isHidden ? '▲ ซ่อน Log' : '▼ แสดง Log';
+        });
+    }
 
     // View Switcher Handlers
     const tableBtn = $('wfhViewTableBtn');
