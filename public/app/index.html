@@ -90,13 +90,19 @@
         .wfh-filter-bar {
             display: flex;
             flex-wrap: wrap;
-            gap: 12px;
+            gap: 14px;
             align-items: center;
+            justify-content: flex-end;
             padding: 12px 16px;
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid var(--border-color, #333);
             border-radius: 10px;
             margin-bottom: 16px;
+        }
+        .wfh-filter-bar label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            white-space: nowrap;
         }
         .wfh-filter-bar input, .wfh-filter-bar select {
             padding: 6px 12px;
@@ -198,9 +204,9 @@
             <div class="nav-right"></div>
         </header>
 
-        <div class="content-row" style="display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+        <div class="content-row" style="display: flex; gap: 20px; align-items: flex-start; flex-wrap: nowrap; width: 100%;">
             <!-- Left Card: WFH Automation Form (30% Width) -->
-            <div class="panel" style="flex: 3; flex-basis: 30%; min-width: 320px; margin-top: 0;">
+            <div class="panel" style="flex: 3; flex-basis: 30%; min-width: 300px; margin-top: 0; box-sizing: border-box;">
                 <header>
                     <h2>WFH Automation</h2>
                     <p>Run server-side Playwright steps for Debutservice</p>
@@ -336,7 +342,7 @@
             </div>
 
             <!-- Right Card: Debutservice WFH Requests Table & Calendar (70% Width) -->
-            <div class="panel" style="flex: 7; flex-basis: 70%; min-width: 500px; margin-top: 0;">
+            <div class="panel" style="flex: 7; flex-basis: 70%; min-width: 0; margin-top: 0; box-sizing: border-box; overflow: hidden;">
                 <header style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;">
                     <div>
                         <h2>รายการขอสิทธิ์ Work From Home (Debutservice)</h2>
@@ -356,10 +362,10 @@
                 </header>
 
                 <main>
-                    <!-- Filter Toolbar (Status + Date Filter Only) -->
-                    <div class="wfh-filter-bar">
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <label for="wfhFilterStatus">สถานะ:</label>
+                    <!-- Filter Toolbar (Status + Date Filter Right Aligned) -->
+                    <div class="wfh-filter-bar" style="display: flex; justify-content: flex-end; align-items: center; gap: 14px; flex-wrap: wrap;">
+                        <div style="display: flex; align-items: center; gap: 6px; white-space: nowrap;">
+                            <label for="wfhFilterStatus" style="white-space: nowrap;">สถานะ:</label>
                             <select id="wfhFilterStatus">
                                 <option value="all">ทั้งหมด (All)</option>
                                 <option value="Approve">Approve</option>
@@ -369,13 +375,13 @@
                                 <option value="Cancel">Cancel</option>
                             </select>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <label for="wfhFilterStartDate">วันที่:</label>
+                        <div style="display: flex; align-items: center; gap: 6px; white-space: nowrap;">
+                            <label for="wfhFilterStartDate" style="white-space: nowrap;">วันที่:</label>
                             <input type="date" id="wfhFilterStartDate" title="Start Date">
-                            <span style="color: var(--text-muted);">ถึง</span>
+                            <span style="color: var(--text-muted); white-space: nowrap;">ถึง</span>
                             <input type="date" id="wfhFilterEndDate" title="End Date">
                         </div>
-                        <button id="wfhFilterResetBtn" type="button" class="btn-secondary" style="padding: 6px 12px; font-size: 0.82rem; margin-left: auto;">ล้างตัวกรอง</button>
+                        <button id="wfhFilterResetBtn" type="button" class="btn-secondary" style="padding: 6px 12px; font-size: 0.82rem; white-space: nowrap;">ล้างตัวกรอง</button>
                     </div>
 
                     <!-- Table View -->
