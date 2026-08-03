@@ -180,6 +180,19 @@
         .cal-wfh-pill.status-reject { background: #c62828; color: #fff; }
         .cal-wfh-pill.status-cancel { background: #616161; color: #fff; }
 
+        .view-mode-btn {
+            padding: 6px 14px;
+            font-size: 0.85rem;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            background: transparent;
+            color: var(--text-muted, #aaa);
+            transition: all 0.2s ease;
+        }
+        .view-mode-btn:hover {
+            color: var(--text-color, #fff);
+        }
         .view-mode-btn.active {
             background: var(--primary-color, #FF8F00) !important;
             color: #000 !important;
@@ -364,10 +377,10 @@
                         <p id="wfhListLastUpdated" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 4px;">ยังไม่มีการดึงข้อมูลล่าสุด</p>
                     </div>
                     <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto;">
-                        <!-- Mode Switcher Right Aligned at Top -->
+                        <!-- Mode Switcher Right Aligned at Far Top Right -->
                         <div style="display: inline-flex; background: rgba(0,0,0,0.3); padding: 3px; border-radius: 8px; border: 1px solid var(--border-color, #444);">
-                            <button id="wfhViewTableBtn" type="button" class="view-mode-btn active" style="padding: 6px 14px; font-size: 0.85rem; border: none; border-radius: 6px; cursor: pointer;">📋 ตาราง</button>
-                            <button id="wfhViewCalendarBtn" type="button" class="view-mode-btn" style="padding: 6px 14px; font-size: 0.85rem; border: none; border-radius: 6px; cursor: pointer; background: transparent; color: var(--text-muted);">📅 ปฏิทิน</button>
+                            <button id="wfhViewTableBtn" type="button" class="view-mode-btn active">📋 ตาราง</button>
+                            <button id="wfhViewCalendarBtn" type="button" class="view-mode-btn">📅 ปฏิทิน</button>
                         </div>
                         <button id="wfhRepullBtn" type="button" class="btn-secondary" style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 16px;">
                             <span id="wfhRepullIcon">🔄</span>

@@ -687,9 +687,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         tableBtn.addEventListener('click', () => {
             activeViewMode = 'table';
             tableBtn.classList.add('active');
-            tableBtn.style.color = '#000';
             calendarBtn.classList.remove('active');
-            calendarBtn.style.color = 'var(--text-muted)';
             if (tableView) tableView.style.display = 'block';
             if (calendarView) calendarView.style.display = 'none';
         });
@@ -697,9 +695,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         calendarBtn.addEventListener('click', () => {
             activeViewMode = 'calendar';
             calendarBtn.classList.add('active');
-            calendarBtn.style.color = '#000';
             tableBtn.classList.remove('active');
-            tableBtn.style.color = 'var(--text-muted)';
             if (calendarView) calendarView.style.display = 'block';
             if (tableView) tableView.style.display = 'none';
             renderWfhCalendar();
