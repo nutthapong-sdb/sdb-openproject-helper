@@ -1009,6 +1009,27 @@ app.post('/api/automation/debutservice/work-from-home/fetch', async (req, res) =
     if (!currentUsername) currentUsername = 'nutthapong.v@softdebut.com';
     if (currentUsername && currentPassword) {
         accountsToScrape.push({ username: currentUsername, password: currentPassword, userId: currentUserId });
+        if (currentUserId) {
+            // Auto save credentials to wfh_form_defaults for persistent multi-user scraping
+            db.get('SELECT data FROM wfh_form_defaults WHERE user_id = ?', [currentUserId], (err, row) => {
+                let existing = {};
+                if (row && row.data) {
+                    try { existing = JSON.parse(row.data) || {}; } catch {}
+                }
+                existing.email = currentUsername;
+                existing.loginPassword = currentPassword;
+                if (body.thaiName) existing.thaiName = body.thaiName;
+                if (body.engName) existing.engName = body.engName;
+                if (body.phone) existing.phone = body.phone;
+                if (body.department) existing.department = body.department;
+                db.run(
+                    `INSERT INTO wfh_form_defaults (user_id, data, updated_at)
+                     VALUES (?, ?, CURRENT_TIMESTAMP)
+                     ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP`,
+                    [currentUserId, JSON.stringify(existing)]
+                );
+            });
+        }
     }
 
     // Also fetch all other saved user credentials from wfh_form_defaults
