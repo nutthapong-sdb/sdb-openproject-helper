@@ -376,16 +376,16 @@
                         <h2>รายการขอสิทธิ์ Work From Home (Debutservice)</h2>
                         <p id="wfhListLastUpdated" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 4px;">ยังไม่มีการดึงข้อมูลล่าสุด</p>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto;">
-                        <!-- Mode Switcher Right Aligned at Far Top Right -->
-                        <div style="display: inline-flex; background: rgba(0,0,0,0.3); padding: 3px; border-radius: 8px; border: 1px solid var(--border-color, #444);">
-                            <button id="wfhViewTableBtn" type="button" class="view-mode-btn active">📋 ตาราง</button>
-                            <button id="wfhViewCalendarBtn" type="button" class="view-mode-btn">📅 ปฏิทิน</button>
-                        </div>
+                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto; justify-content: flex-end;">
                         <button id="wfhRepullBtn" type="button" class="btn-secondary" style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 16px;">
                             <span id="wfhRepullIcon">🔄</span>
                             <span id="wfhRepullText">ดึงข้อมูลใหม่ (Re-pull)</span>
                         </button>
+                        <!-- Mode Switcher at Far Top Right Corner -->
+                        <div style="display: inline-flex; background: rgba(0,0,0,0.3); padding: 3px; border-radius: 8px; border: 1px solid var(--border-color, #444);">
+                            <button id="wfhViewTableBtn" type="button" class="view-mode-btn active">📋 ตาราง</button>
+                            <button id="wfhViewCalendarBtn" type="button" class="view-mode-btn">📅 ปฏิทิน</button>
+                        </div>
                     </div>
                 </header>
 
