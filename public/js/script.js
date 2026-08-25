@@ -1313,6 +1313,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    $('#openRankingSettingsBtn, #rankingDateRangeBadge').on('click', function() {
+        openAdminPanel();
+    });
+
     // Expose edit function to global scope
     window.editUser = async (id, username, name, role) => {
         const result = await Swal.fire({

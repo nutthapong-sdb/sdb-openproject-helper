@@ -236,14 +236,17 @@
                 style="flex: 5; display: flex; flex-direction: column; gap: 20px; min-width: 350px;">
                 <div class="panel right-panel-users" style="min-width: 0; display: flex; flex-direction: column;">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; flex-wrap: wrap; gap: 8px;">
-                        <h2 style="margin: 0;">Ranking</h2>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <h2 style="margin: 0;">Ranking</h2>
+                            <button id="openRankingSettingsBtn" type="button" style="background: transparent; border: none; color: #aaa; cursor: pointer; font-size: 1.05rem; padding: 2px 5px; border-radius: 4px; transition: all 0.2s ease;" title="ตั้งค่าช่วงเวลา Ranking">⚙️</button>
+                        </div>
                         <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
                             <button id="syncTimeEntriesBtn" type="button" class="btn-secondary" style="padding: 4px 10px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; cursor: pointer;" title="ดึงข้อมูลชั่วโมงทำงานจริงจาก OpenProject API">
                                 <span id="syncTimeEntriesIcon">🔄</span>
                                 <span>Sync OpenProject Time</span>
                             </button>
                             <span id="rankingLastSyncLabel" style="font-size: 0.75rem; color: #aaa;">ยังไม่มีการ Sync ข้อมูล</span>
-                            <span id="rankingDateRangeBadge" style="font-size: 0.8rem; background: #333; color: #ffca28; padding: 3px 10px; border-radius: 12px; font-weight: 500;"></span>
+                            <span id="rankingDateRangeBadge" style="font-size: 0.8rem; background: #333; color: #ffca28; padding: 3px 10px; border-radius: 12px; font-weight: 500; cursor: pointer;" title="คลิกเพื่อปรับช่วงเวลา Ranking"></span>
                         </div>
                     </div>
                     <div class="users-stats-container" style="overflow-y: auto; flex: 1;">
@@ -336,46 +339,42 @@
             </table>
 
             <!-- Ranking Date Range Settings -->
-            <div id="rankingDateAdminSection" style="margin-top: 30px; border-top: 1px solid #444; padding-top: 20px;">
-                <h3 style="color: #fff; margin-bottom: 15px; font-size: 1.2rem;">📅 Ranking Date Filter (กำหนดช่วงวัน Ranking)</h3>
-                <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 15px;">
-                    <div style="flex: 1; min-width: 170px;">
-                        <label style="display: block; color: #aaa; font-size: 0.85rem; margin-bottom: 6px;">Start Date (วันที่เริ่มต้น):</label>
-                        <input type="date" id="rankingStartDateInput" style="width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid #444; background: #1a1a1a; color: #fff;">
+            <div id="rankingDateAdminSection" style="margin-top: 25px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
+                <h3 style="color: #fff; margin-bottom: 15px; font-size: 1.15rem; font-weight: 600;">📅 Ranking Date Filter (กำหนดช่วงวัน Ranking)</h3>
+                
+                <!-- Quick Filter Shortcut Chips -->
+                <div style="margin-bottom: 18px;">
+                    <div style="color: #aaa; font-size: 0.82rem; font-weight: 500; margin-bottom: 8px;">
+                        ⚡ ทางลัดเลือกช่วงเวลา:
                     </div>
-                    <div style="flex: 1; min-width: 170px;">
-                        <label style="display: block; color: #aaa; font-size: 0.85rem; margin-bottom: 6px;">End Date (วันที่สิ้นสุด):</label>
-                        <input type="date" id="rankingEndDateInput" style="width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid #444; background: #1a1a1a; color: #fff;">
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <button type="button" id="ranking1MonthBtn" class="preset-chip-btn">1 เดือนย้อนหลัง</button>
+                        <button type="button" id="ranking3MonthsBtn" class="preset-chip-btn">3 เดือนย้อนหลัง</button>
+                        <button type="button" id="ranking6MonthsBtn" class="preset-chip-btn">6 เดือนย้อนหลัง</button>
+                        <button type="button" id="ranking1YearBtn" class="preset-chip-btn">1 ปีย้อนหลัง</button>
+                        <button type="button" id="rankingToPresentBtn" class="preset-chip-btn">จนถึงปัจจุบัน</button>
+                        <button type="button" id="rankingAllTimeBtn" class="preset-chip-btn">ทุกช่วงเวลา</button>
+                    </div>
+                </div>
+
+                <!-- Custom Date Range Form & Save Action -->
+                <div style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 14px; display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 160px;">
+                        <label style="display: block; color: #aaa; font-size: 0.8rem; margin-bottom: 6px; font-weight: 500;">วันที่เริ่มต้น (Start Date):</label>
+                        <input type="date" id="rankingStartDateInput" style="width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: #1a1a1a; color: #fff; font-size: 0.88rem; box-sizing: border-box;">
+                    </div>
+                    <div style="flex: 1; min-width: 160px;">
+                        <label style="display: block; color: #aaa; font-size: 0.8rem; margin-bottom: 6px; font-weight: 500;">วันที่สิ้นสุด (End Date):</label>
+                        <input type="date" id="rankingEndDateInput" style="width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: #1a1a1a; color: #fff; font-size: 0.88rem; box-sizing: border-box;">
                     </div>
                     <div>
-                        <button type="button" id="saveRankingDateBtn" style="background: var(--primary-color, #4CAF50); color: #000; border: none; padding: 9px 20px; border-radius: 6px; cursor: pointer; font-size: 0.9rem; font-weight: 600;">
-                            บันทึกช่วงวันที่
+                        <button type="button" id="saveRankingDateBtn" style="background: var(--primary-color, #4CAF50); color: #000; border: none; padding: 9px 22px; border-radius: 6px; cursor: pointer; font-size: 0.88rem; font-weight: 600; white-space: nowrap; transition: all 0.2s ease;">
+                            💾 บันทึกช่วงวันที่
                         </button>
                     </div>
                 </div>
 
-                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                    <span style="color: #aaa; font-size: 0.85rem; margin-right: 5px;">ตัวเลือกด่วน:</span>
-                    <button type="button" id="ranking1MonthBtn" style="background: #2e7d32; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 500;">
-                        1 เดือนย้อนหลัง
-                    </button>
-                    <button type="button" id="ranking3MonthsBtn" style="background: #1565c0; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 500;">
-                        3 เดือนย้อนหลัง
-                    </button>
-                    <button type="button" id="ranking6MonthsBtn" style="background: #e65100; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 500;">
-                        6 เดือนย้อนหลัง
-                    </button>
-                    <button type="button" id="ranking1YearBtn" style="background: #c2185b; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 500;">
-                        1 ปีย้อนหลัง
-                    </button>
-                    <button type="button" id="rankingToPresentBtn" style="background: #007acc; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 500;">
-                        จนถึงปัจจุบัน
-                    </button>
-                    <button type="button" id="rankingAllTimeBtn" style="background: #9c27b0; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 500;">
-                        ทุกช่วงเวลา
-                    </button>
-                </div>
-                <p id="rankingDateNotice" style="color: #888; font-size: 0.85rem; margin-top: 10px;"></p>
+                <p id="rankingDateNotice" style="color: #888; font-size: 0.82rem; margin-top: 10px; margin-bottom: 0;"></p>
             </div>
         </div>
     </div>
