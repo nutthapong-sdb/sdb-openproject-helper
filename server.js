@@ -2319,12 +2319,26 @@ function parseIsoDuration(durationStr) {
 }
 
 // Sync Time Entries directly from OpenProject API /api/v3/time_entries
-async function syncOpenProjectTimeEntries(apiKey) {
+async function syncOpenProjectTimeEntries(specificApiKey = null) {
     console.log('[TimeEntries] Syncing real time entries from OpenProject API...');
-    let offset = 1;
-    const pageSize = 500;
+
+    // Collect API keys to use (combining current user + all registered users in DB)
+    const apiKeys = new Set();
+    if (specificApiKey) apiKeys.add(specificApiKey);
+
+    const dbKeys = await new Promise(resolve => {
+        db.all("SELECT api_key FROM users WHERE api_key IS NOT NULL AND api_key != ''", [], (err, rows) => {
+            resolve((rows || []).map(r => r.api_key));
+        });
+    });
+    dbKeys.forEach(k => apiKeys.add(k));
+
+    if (apiKeys.size === 0) {
+        throw new Error('No API keys found to sync OpenProject time entries.');
+    }
+
     let totalSynced = 0;
-    let totalInOp = 0;
+    let maxTotalInOp = 0;
 
     const stmt = db.prepare(`
         INSERT INTO openproject_time_entries (openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment, updated_at)
@@ -2341,45 +2355,52 @@ async function syncOpenProjectTimeEntries(apiKey) {
             updated_at=CURRENT_TIMESTAMP
     `);
 
-    while (true) {
-        const url = `${HOST}/api/v3/time_entries?pageSize=${pageSize}&offset=${offset}`;
-        const result = await puppeteerFetch(url, { method: 'GET' }, apiKey);
+    for (const key of apiKeys) {
+        let page = 1;
+        const pageSize = 500;
 
-        if (result.status !== 200 || !result.data || typeof result.data !== 'object' || !result.data._embedded) {
-            if (offset === 1) {
-                stmt.finalize();
-                const errDetail = (typeof result.data === 'object' && result.data && result.data.message) ? result.data.message : (result.error || `OpenProject returned non-JSON response (${result.status})`);
-                throw new Error(`OpenProject API error: ${errDetail}`);
+        while (true) {
+            const url = `${HOST}/api/v3/time_entries?pageSize=${pageSize}&offset=${page}`;
+            console.log(`[TimeEntries] Fetching page ${page} with API Key ${key.substring(0, 8)}...`);
+            const result = await puppeteerFetch(url, { method: 'GET' }, key);
+
+            if (result.status !== 200 || !result.data || typeof result.data !== 'object' || !result.data._embedded) {
+                if (page === 1 && apiKeys.size === 1) {
+                    stmt.finalize();
+                    const errDetail = (typeof result.data === 'object' && result.data && result.data.message) ? result.data.message : (result.error || `OpenProject returned non-JSON response (${result.status})`);
+                    throw new Error(`OpenProject API error: ${errDetail}`);
+                }
+                break;
             }
-            break;
-        }
 
-        const elements = result.data._embedded.elements || [];
-        totalInOp = result.data.total || elements.length;
+            const elements = result.data._embedded.elements || [];
+            const totalInOp = result.data.total || elements.length;
+            if (totalInOp > maxTotalInOp) maxTotalInOp = totalInOp;
 
-        if (elements.length === 0) break;
+            if (elements.length === 0) break;
 
-        db.serialize(() => {
-            elements.forEach(elem => {
-                const openproject_id = String(elem.id);
-                const spent_on = (elem.spentOn || '').slice(0, 10);
-                const hours = parseIsoDuration(elem.hours);
-                const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
-                const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
-                const user_name = elem._links && elem._links.user ? (elem._links.user.title || '') : '';
-                const work_package_id = elem._links && elem._links.workPackage ? elem._links.workPackage.href.split('/').pop() : '';
-                const work_package_title = elem._links && elem._links.workPackage ? (elem._links.workPackage.title || '') : '';
-                const project_name = elem._links && elem._links.project ? (elem._links.project.title || '') : '';
+            db.serialize(() => {
+                elements.forEach(elem => {
+                    const openproject_id = String(elem.id);
+                    const spent_on = (elem.spentOn || '').slice(0, 10);
+                    const hours = parseIsoDuration(elem.hours);
+                    const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
+                    const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
+                    const user_name = elem._links && elem._links.user ? (elem._links.user.title || '') : '';
+                    const work_package_id = elem._links && elem._links.workPackage ? elem._links.workPackage.href.split('/').pop() : '';
+                    const work_package_title = elem._links && elem._links.workPackage ? (elem._links.workPackage.title || '') : '';
+                    const project_name = elem._links && elem._links.project ? (elem._links.project.title || '') : '';
 
-                stmt.run([openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment]);
-                totalSynced++;
+                    stmt.run([openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment]);
+                    totalSynced++;
+                });
             });
-        });
 
-        if (totalSynced >= totalInOp || elements.length < pageSize) {
-            break;
+            if (elements.length < pageSize) {
+                break;
+            }
+            page++;
         }
-        offset += elements.length;
     }
 
     stmt.finalize();
@@ -2387,7 +2408,7 @@ async function syncOpenProjectTimeEntries(apiKey) {
     return {
         ok: true,
         count: totalSynced,
-        totalInOpenProject: totalInOp
+        totalInOpenProject: maxTotalInOp
     };
 }
 
