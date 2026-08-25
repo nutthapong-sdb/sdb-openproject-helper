@@ -370,7 +370,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 tr.style.cursor = 'pointer';
                 tr.innerHTML = `
                     <td style="padding: 10px 4px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; font-size: 0.95rem; color: ${rank <= 3 ? 'var(--primary-color)' : '#aaa'};">${rank}</td>
-                    <td style="padding: 10px 6px; border-bottom: 1px solid #333;">
+                    <td style="padding: 10px 8px; border-bottom: 1px solid #333;">
                         <div style="display: flex; align-items: center; width: 100%;">
                             <div class="rank-avatar-container" style="flex-shrink: 0;">
                                  ${iconHtml}
@@ -378,16 +378,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${rank <= 5 ? '#fff' : '#aaa'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
                                  </div>
                             </div>
-                            <div style="width: 200px; min-width: 200px; max-width: 200px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; margin-right: 10px; flex-shrink: 0;">
+                            <div style="flex: 1; min-width: 140px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; margin-right: 8px;">
                                 <span style="${nameStyle}" title="${u.name}">${u.name || 'Unknown'}</span>
                             </div>
-                            <div style="flex: 1; display: flex; align-items: center; min-width: 0;">
+                            <div style="display: flex; align-items: center; flex-shrink: 0;">
                                 ${missingBadgeHtml}
                             </div>
                         </div>
                     </td>
-                    <td style="padding: 10px 4px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; color: var(--primary-color); font-size: ${rank <= 3 ? '1.05rem' : '0.88rem'};">${displayWork}</td>
-                    <td style="padding: 10px 4px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; color: #ffb74d; font-size: ${rank <= 3 ? '1.05rem' : '0.88rem'};">${displayOt}</td>
+                    <td style="padding: 10px 8px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; color: var(--primary-color); font-size: ${rank <= 3 ? '1.05rem' : '0.9rem'};">${displayWork}</td>
+                    <td style="padding: 10px 8px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; color: #ffb74d; font-size: ${rank <= 3 ? '1.05rem' : '0.9rem'};">${displayOt}</td>
                 `;
                 tbody.appendChild(tr);
 
