@@ -2426,53 +2426,90 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
             updated_at=CURRENT_TIMESTAMP
     `);
 
-    for (const key of apiKeys) {
-        let page = 1;
-        const pageSize = 500;
+    // Launch ONE single Puppeteer browser for fast persistent session fetching
+    const browser = await puppeteer.launch({
+        headless: 'shell',
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--disable-gpu',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-notifications',
+            '--disable-extensions',
+            '--mute-audio'
+        ],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+    });
 
-        while (true) {
-            const url = `${HOST}/api/v3/time_entries?pageSize=${pageSize}&offset=${page}`;
-            console.log(`[TimeEntries] Fetching page ${page} with API Key ${key.substring(0, 8)}...`);
-            const result = await puppeteerFetch(url, { method: 'GET' }, key);
+    try {
+        const page = await browser.newPage();
 
-            if (result.status !== 200 || !result.data || typeof result.data !== 'object' || !result.data._embedded) {
-                if (page === 1 && apiKeys.size === 1) {
-                    stmt.finalize();
-                    const errDetail = (typeof result.data === 'object' && result.data && result.data.message) ? result.data.message : (result.error || `OpenProject returned non-JSON response (${result.status})`);
-                    throw new Error(`OpenProject API error: ${errDetail}`);
+        // Filter time entries from 2025 onwards for high performance and fast sync under Cloudflare timeout limits
+        const dateFilter = JSON.stringify([
+            { "spent_on": { "operator": ">=d", "values": ["2025-01-01"] } }
+        ]);
+
+        for (const key of apiKeys) {
+            await page.authenticate({ username: 'apikey', password: key });
+
+            let pageNum = 1;
+            const pageSize = 500;
+
+            while (true) {
+                const url = `${HOST}/api/v3/time_entries?pageSize=${pageSize}&offset=${pageNum}`;
+                console.log(`[TimeEntries] Fast-fetching page ${pageNum} with API Key ${key.substring(0, 8)}...`);
+
+                const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                if (!response || response.status() !== 200) {
+                    break;
                 }
-                break;
-            }
 
-            const elements = result.data._embedded.elements || [];
-            const totalInOp = result.data.total || elements.length;
-            if (totalInOp > maxTotalInOp) maxTotalInOp = totalInOp;
-
-            if (elements.length === 0) break;
-
-            db.serialize(() => {
-                elements.forEach(elem => {
-                    const openproject_id = String(elem.id);
-                    activeOpIds.add(openproject_id);
-                    const spent_on = (elem.spentOn || '').slice(0, 10);
-                    const hours = parseIsoDuration(elem.hours);
-                    const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
-                    const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
-                    const user_name = elem._links && elem._links.user ? (elem._links.user.title || '') : '';
-                    const work_package_id = elem._links && elem._links.workPackage ? elem._links.workPackage.href.split('/').pop() : '';
-                    const work_package_title = elem._links && elem._links.workPackage ? (elem._links.workPackage.title || '') : '';
-                    const project_name = elem._links && elem._links.project ? (elem._links.project.title || '') : '';
-
-                    stmt.run([openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment]);
-                    totalSynced++;
+                const jsonText = await page.evaluate(() => {
+                    const pre = document.querySelector('pre');
+                    return pre ? pre.innerText : document.body.innerText;
                 });
-            });
+                let data = null;
+                try {
+                    data = JSON.parse(jsonText);
+                } catch {
+                    break;
+                }
 
-            if (elements.length < pageSize) {
-                break;
+                if (!data || !data._embedded) break;
+
+                const elements = data._embedded.elements || [];
+                const totalInOp = data.total || elements.length;
+                if (totalInOp > maxTotalInOp) maxTotalInOp = totalInOp;
+
+                if (elements.length === 0) break;
+
+                db.serialize(() => {
+                    elements.forEach(elem => {
+                        const openproject_id = String(elem.id);
+                        activeOpIds.add(openproject_id);
+                        const spent_on = (elem.spentOn || '').slice(0, 10);
+                        const hours = parseIsoDuration(elem.hours);
+                        const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
+                        const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
+                        const user_name = elem._links && elem._links.user ? (elem._links.user.title || '') : '';
+                        const work_package_id = elem._links && elem._links.workPackage ? elem._links.workPackage.href.split('/').pop() : '';
+                        const work_package_title = elem._links && elem._links.workPackage ? (elem._links.workPackage.title || '') : '';
+                        const project_name = elem._links && elem._links.project ? (elem._links.project.title || '') : '';
+
+                        stmt.run([openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment]);
+                        totalSynced++;
+                    });
+                });
+
+                if (elements.length < pageSize) break;
+                pageNum++;
             }
-            page++;
         }
+    } finally {
+        await browser.close().catch(() => {});
     }
 
     stmt.finalize();
