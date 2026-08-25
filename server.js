@@ -2142,6 +2142,13 @@ app.post('/api/work_packages', async (req, res) => {
             }
             // ---------------------
 
+            // Auto-sync real time entries from OpenProject API whenever a task is created or time is logged
+            if (userApiKey) {
+                syncOpenProjectTimeEntries(userApiKey).catch(syncErr => {
+                    console.warn('[CreateTask] Background auto-sync notice:', syncErr.message);
+                });
+            }
+
             res.json({
                 ...result.data,
                 webUrl,
@@ -2490,9 +2497,14 @@ app.get('/api/users-stats', async (req, res) => {
 
         db.all(query, params, (err, rows) => {
             if (err) return res.status(500).json({ error: err.message });
-            res.json({
-                settings,
-                users: rows || []
+
+            db.get("SELECT MAX(updated_at) as last_updated FROM openproject_time_entries", [], (syncErr, syncRow) => {
+                const lastSync = (syncRow && syncRow.last_updated) ? syncRow.last_updated : null;
+                res.json({
+                    settings,
+                    users: rows || [],
+                    lastSync
+                });
             });
         });
     } catch (e) {

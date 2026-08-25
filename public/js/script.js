@@ -319,6 +319,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
+            const syncLabel = document.getElementById('rankingLastSyncLabel');
+            if (syncLabel) {
+                if (data && data.lastSync) {
+                    const d = new Date(data.lastSync);
+                    syncLabel.textContent = `Sync ล่าสุด: ${d.toLocaleString('th-TH')}`;
+                } else {
+                    syncLabel.textContent = `ยังไม่มีการ Sync ข้อมูล`;
+                }
+            }
+
             tbody.innerHTML = '';
 
             if (users.length === 0) {
