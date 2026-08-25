@@ -269,18 +269,17 @@
                     </div>
                 </div>
 
-                <!-- Panel 2.5: Unlogged Workdays Widget (กล่องสำหรับกรอกช่วงเวลาค้างที่ยังไม่ได้กรอก) -->
+                <!-- Panel 2.5: Unlogged Workdays Widget (รายการที่ยังไม่ลงข้อมูล) -->
                 <div id="unloggedWorkdaysCard" class="panel right-panel" style="width: 100%; max-width: none; min-width: 0;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
-                        <h2 id="unloggedCardTitle" style="margin: 0; font-size: 1.05rem; color: #fff; font-weight: 600;">ช่วงเวลาค้างที่ยังไม่ได้กรอก (เป้าหมาย 8.0 ชม./วัน)</h2>
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <!-- Tabs -->
-                            <div style="display: flex; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 2px; border: 1px solid rgba(255,255,255,0.1);">
-                                <button type="button" id="tabUnloggedTasksBtn" class="preset-chip-btn active" style="padding: 2px 10px; font-size: 0.76rem;">งานค้าง</button>
-                                <button type="button" id="tabExcludedDatesBtn" class="preset-chip-btn" style="padding: 2px 10px; font-size: 0.76rem;">วันที่ยกเว้น</button>
-                            </div>
-                            <span id="unloggedCountBadge" style="font-size: 0.78rem; background: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid rgba(255,82,82,0.3); padding: 2px 8px; border-radius: 10px; font-weight: 500;"></span>
-                        </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <h2 id="unloggedCardTitle" style="margin: 0; font-size: 1.05rem; color: #fff; font-weight: 600;">รายการที่ยังไม่ลงข้อมูล</h2>
+                        <span id="unloggedCountBadge" style="font-size: 0.78rem; background: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid rgba(255,82,82,0.3); padding: 2px 8px; border-radius: 10px; font-weight: 500;"></span>
+                    </div>
+
+                    <!-- Sub-navigation Tabs below header -->
+                    <div style="display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">
+                        <button type="button" id="tabUnloggedTasksBtn" class="preset-chip-btn active" style="padding: 3px 12px; font-size: 0.78rem;">งานค้าง</button>
+                        <button type="button" id="tabExcludedDatesBtn" class="preset-chip-btn" style="padding: 3px 12px; font-size: 0.78rem;">วันที่ยกเว้น</button>
                     </div>
 
                     <!-- Tab 1: Unlogged Tasks -->

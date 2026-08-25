@@ -454,7 +454,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const isAdminUser = currentUserRole === 'admin' || currentUserRole === 'root';
 
             if (unloggedTitle) {
-                unloggedTitle.textContent = isAdminUser ? 'ยังไม่ได้กรอก' : 'ช่วงเวลาค้างที่ยังไม่ได้กรอก (เป้าหมาย 8.0 ชม./วัน)';
+                unloggedTitle.textContent = 'รายการที่ยังไม่ลงข้อมูล';
             }
 
             if (unloggedCard && unloggedContainer) {
