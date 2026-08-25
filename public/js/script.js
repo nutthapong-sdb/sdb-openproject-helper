@@ -1188,26 +1188,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         if (currentRankingMode === 'all') {
             $('#rankingAllTimeBtn').addClass('active').html('✓ ทั้งหมด');
-            $('#rankingToPresentBtn').html('ปัจจุบัน');
             $('#rankingStartDateInput').val('').prop('disabled', true);
             $('#rankingEndDateInput').val('').prop('disabled', true);
             const noticeText = isAdmin 
                 ? 'โหมด: แสดงทุกช่วงเวลา (All-Time) ทั้งหมดที่มีในระบบ'
                 : 'โหมด: แสดงทุกช่วงเวลา (เฉพาะ Role Admin ขึ้นไปเท่านั้นที่สามารถเปลี่ยนได้)';
             $('#rankingDateNotice').text(noticeText);
-        } else if (currentRankingMode === 'to_present') {
-            $('#rankingAllTimeBtn').html('ทั้งหมด');
-            $('#rankingToPresentBtn').addClass('active').html('✓ ปัจจุบัน');
-            const today = new Date().toISOString().split('T')[0];
-            $('#rankingStartDateInput').prop('disabled', !isAdmin);
-            $('#rankingEndDateInput').val(today).prop('disabled', true);
-            const noticeText = isAdmin 
-                ? 'โหมด: คำนวณตั้งแต่วันที่เริ่มต้น จนถึงวันปัจจุบัน (อัปเดตอัตโนมัติทุกวัน)'
-                : 'โหมด: คำนวณตั้งแต่วันที่เริ่มต้น จนถึงวันปัจจุบัน (เฉพาะ Role Admin ขึ้นไปเท่านั้นที่สามารถเปลี่ยนได้)';
-            $('#rankingDateNotice').text(noticeText);
         } else {
             $('#rankingAllTimeBtn').html('ทั้งหมด');
-            $('#rankingToPresentBtn').html('ปัจจุบัน');
             $('#rankingStartDateInput').prop('disabled', !isAdmin);
             $('#rankingEndDateInput').prop('disabled', !isAdmin);
             const noticeText = isAdmin 
@@ -1220,25 +1208,65 @@ document.addEventListener('DOMContentLoaded', async () => {
         $('#saveRankingDateBtn').prop('disabled', !isAdmin).css('opacity', isAdmin ? '1' : '0.5');
     }
 
-    const applyPresetDateRange = (months, years = 0, btnId = null) => {
+    const applyPresetDateRange = (modeKey) => {
         const today = new Date();
-        const endStr = today.toISOString().split('T')[0];
-        const startObj = new Date(today);
-        if (months > 0) startObj.setMonth(startObj.getMonth() - months);
-        if (years > 0) startObj.setFullYear(startObj.getFullYear() - years);
-        const startStr = startObj.toISOString().split('T')[0];
+        const year = today.getFullYear();
+        const formatIsoDate = (d) => {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+        };
+
+        let startStr = '';
+        let endStr = formatIsoDate(today);
+
+        if (modeKey === '1_month') {
+            const startObj = new Date(today);
+            startObj.setMonth(startObj.getMonth() - 1);
+            startStr = formatIsoDate(startObj);
+        } else if (modeKey === '3_months') {
+            const startObj = new Date(today);
+            startObj.setMonth(startObj.getMonth() - 3);
+            startStr = formatIsoDate(startObj);
+        } else if (modeKey === '6_months') {
+            const startObj = new Date(today);
+            startObj.setMonth(startObj.getMonth() - 6);
+            startStr = formatIsoDate(startObj);
+        } else if (modeKey === '1_year') {
+            const startObj = new Date(today);
+            startObj.setFullYear(startObj.getFullYear() - 1);
+            startStr = formatIsoDate(startObj);
+        } else if (modeKey === 'this_year') {
+            startStr = `${year}-01-01`;
+            endStr = formatIsoDate(today);
+        } else if (modeKey === 'last_year') {
+            startStr = `${year - 1}-01-01`;
+            endStr = `${year - 1}-12-31`;
+        }
 
         $('#rankingStartDateInput').val(startStr);
         $('#rankingEndDateInput').val(endStr);
         currentRankingMode = 'custom';
         updateRankingModeUI();
-        if (btnId) $(btnId).addClass('active');
+
+        const btnIdMap = {
+            '1_month': '#ranking1MonthBtn',
+            '3_months': '#ranking3MonthsBtn',
+            '6_months': '#ranking6MonthsBtn',
+            '1_year': '#ranking1YearBtn',
+            'this_year': '#rankingThisYearBtn',
+            'last_year': '#rankingLastYearBtn'
+        };
+        if (btnIdMap[modeKey]) $(btnIdMap[modeKey]).addClass('active');
     };
 
-    $('#ranking1MonthBtn').on('click', function() { applyPresetDateRange(1, 0, '#ranking1MonthBtn'); });
-    $('#ranking3MonthsBtn').on('click', function() { applyPresetDateRange(3, 0, '#ranking3MonthsBtn'); });
-    $('#ranking6MonthsBtn').on('click', function() { applyPresetDateRange(6, 0, '#ranking6MonthsBtn'); });
-    $('#ranking1YearBtn').on('click', function() { applyPresetDateRange(0, 1, '#ranking1YearBtn'); });
+    $('#ranking1MonthBtn').on('click', function() { applyPresetDateRange('1_month'); });
+    $('#ranking3MonthsBtn').on('click', function() { applyPresetDateRange('3_months'); });
+    $('#ranking6MonthsBtn').on('click', function() { applyPresetDateRange('6_months'); });
+    $('#ranking1YearBtn').on('click', function() { applyPresetDateRange('1_year'); });
+    $('#rankingThisYearBtn').on('click', function() { applyPresetDateRange('this_year'); });
+    $('#rankingLastYearBtn').on('click', function() { applyPresetDateRange('last_year'); });
 
     $('#rankingAllTimeBtn').on('click', function() {
         currentRankingMode = currentRankingMode === 'all' ? 'custom' : 'all';
