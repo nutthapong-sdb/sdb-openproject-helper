@@ -481,8 +481,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const rowsHtml = myMInfo.missingDays.map(d => {
                         const fmtDate = formatDateDisplay(d.date);
                         const excludeBtnHtml = isAdminUser ? `
-                            <button type="button" onclick="window.addExcludedDatePrompt('${d.date}')" class="fill-form-chip-btn" style="background: #e53935; color: #fff; margin-left: 4px;" title="ยกเว้นวันนี้นำออกจากรายการวันค้างสำหรับทุกคน">
-                                🚫 ยกเว้น
+                            <button type="button" onclick="window.addExcludedDatePrompt('${d.date}')" class="fill-form-chip-btn" style="background: #e53935; color: #fff;" title="ยกเว้นวันนี้นำออกจากรายการวันค้างสำหรับทุกคน">
+                                ยกเว้น
                             </button>
                         ` : '';
                         return `
@@ -491,10 +491,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 <td style="padding: 6px 10px; text-align: center; color: #aaa;">${d.loggedHours.toFixed(1)} ชม.</td>
                                 <td style="padding: 6px 10px; text-align: center; color: #ff5252; font-weight: bold;">${d.missingHours.toFixed(1)} ชม.</td>
                                 <td style="padding: 6px 10px; text-align: right;">
-                                    <button type="button" onclick="window.fillTaskFormFromMissing('${d.date}', ${d.missingHours})" class="fill-form-chip-btn" title="คลิกเพื่อนำวันที่และชั่วโมงขาดไปกรอกในฟอร์ม">
-                                        ➕ กรอกข้อมูล (${d.missingHours.toFixed(1)} ชม.)
-                                    </button>
-                                    ${excludeBtnHtml}
+                                    <div style="display: inline-flex; gap: 6px; align-items: center; justify-content: flex-end;">
+                                        <button type="button" onclick="window.fillTaskFormFromMissing('${d.date}', ${d.missingHours})" class="fill-form-chip-btn" title="คลิกเพื่อนำวันที่และชั่วโมงขาดไปกรอกในฟอร์ม">
+                                            กรอกข้อมูล (${d.missingHours.toFixed(1)} ชม.)
+                                        </button>
+                                        ${excludeBtnHtml}
+                                    </div>
                                 </td>
                             </tr>
                         `;
@@ -1628,8 +1630,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const dObj = new Date(item.excluded_date);
                 const dayName = !isNaN(dObj.getTime()) ? dayNames[dObj.getDay()] : '';
                 const actionsHtml = isAdmin ? `
-                    <button type="button" onclick="window.editExcludedDate(${item.id}, '${item.excluded_date}', '${(item.reason || '').replace(/'/g, "\\'")}')" class="fill-form-chip-btn" style="background: #0288d1; color: #fff; padding: 2px 7px; font-size: 0.73rem;">✏️ แก้ไข</button>
-                    <button type="button" onclick="window.deleteExcludedDate(${item.id}, '${item.excluded_date}')" class="fill-form-chip-btn" style="background: #e53935; color: #fff; padding: 2px 7px; font-size: 0.73rem; margin-left: 3px;">🗑️ ลบ</button>
+                    <div style="display: inline-flex; gap: 4px; align-items: center; justify-content: flex-end;">
+                        <button type="button" onclick="window.editExcludedDate(${item.id}, '${item.excluded_date}', '${(item.reason || '').replace(/'/g, "\\'")}')" class="fill-form-chip-btn" style="background: #0288d1; color: #fff; padding: 2px 7px; font-size: 0.73rem;">แก้ไข</button>
+                        <button type="button" onclick="window.deleteExcludedDate(${item.id}, '${item.excluded_date}')" class="fill-form-chip-btn" style="background: #e53935; color: #fff; padding: 2px 7px; font-size: 0.73rem;">ลบ</button>
+                    </div>
                 ` : '<span style="color: #666; font-size: 0.75rem;">-</span>';
 
                 return `
