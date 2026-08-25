@@ -585,15 +585,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (refreshUnloggedBtn) {
         refreshUnloggedBtn.addEventListener('click', async () => {
             const icon = document.getElementById('refreshUnloggedIcon');
+            if (icon) icon.textContent = '⏳';
             refreshUnloggedBtn.disabled = true;
             try {
+                // Fetch fresh time entries from OpenProject Server live
+                await safeFetchJson('/api/openproject/time-entries/sync', { method: 'POST' });
                 await loadUserStats();
                 if (typeof Swal !== 'undefined') {
                     Swal.fire({
                         icon: 'success',
-                        title: 'รีเฟรชสำเร็จ',
-                        text: 'อัปเดตรายการที่ยังไม่ลงข้อมูลล่าสุดเรียบร้อยแล้ว',
-                        timer: 1500,
+                        title: 'ดึงข้อมูลสดสำเร็จ',
+                        text: 'ดึงเวลาจริงล่าสุดจาก OpenProject Server เรียบร้อยแล้ว',
+                        timer: 1800,
                         showConfirmButton: false,
                         toast: true,
                         position: 'top-end'
@@ -601,7 +604,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             } catch (e) {
                 console.error('[refreshUnloggedBtn]', e);
+                await loadUserStats();
             } finally {
+                if (icon) icon.textContent = '🔄';
                 refreshUnloggedBtn.disabled = false;
             }
         });
