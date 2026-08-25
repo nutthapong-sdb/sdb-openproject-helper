@@ -1,13 +1,15 @@
 document.addEventListener('DOMContentLoaded', async () => {
-    // Global variable for current user ID and role
+    // Global variable for current user ID, role, and user object
     let currentUserId = null;
     let currentUserRole = null;
+    let currentUserData = null;
 
     // Fetch User Info
     try {
         const userRes = await fetch('/api/user');
         if (userRes.ok) {
             const userData = await userRes.json();
+            currentUserData = userData;
             currentUserId = userData.id; // Store user ID
             currentUserRole = userData.role || 'user'; // Store user role
             const displayName = userData.firstName ? `${userData.firstName} ${userData.lastName}` : (userData.name || 'User');
