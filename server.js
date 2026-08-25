@@ -1400,6 +1400,15 @@ db.serialize(() => {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
+    db.all("PRAGMA table_info(ranking_cache)", (err, columns) => {
+        if (!err && columns) {
+            const hasMissingJson = columns.some(c => c.name === 'missing_json');
+            if (!hasMissingJson) {
+                db.run("ALTER TABLE ranking_cache ADD COLUMN missing_json TEXT");
+            }
+        }
+    });
+
     // User Daily Sync Logs (Rate Limit: 1 per day for non-admin users)
     db.run(`CREATE TABLE IF NOT EXISTS user_sync_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
