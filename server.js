@@ -2472,18 +2472,22 @@ async function getUserFromSessionOrKey(req) {
 // Helper: Calculate Mon-Fri workdays where logged time < 8.0 hours for a given user within active date range
 async function calculateUserMissingWorkdays(assigneeId, userName, startDateStr, endDateStr) {
     const dayNames = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
-    const today = new Date();
+    const todayObj = new Date();
+    const todayY = todayObj.getFullYear();
+    const todayM = String(todayObj.getMonth() + 1).padStart(2, '0');
+    const todayD = String(todayObj.getDate()).padStart(2, '0');
+    const todayStr = `${todayY}-${todayM}-${todayD}`;
 
-    let start = startDateStr ? new Date(startDateStr) : new Date(today);
-    if (!startDateStr) {
-        start.setMonth(start.getMonth() - 1);
+    let start = startDateStr ? new Date(`${startDateStr}T00:00:00`) : new Date(todayY, todayObj.getMonth() - 1, todayObj.getDate());
+    let end = endDateStr ? new Date(`${endDateStr}T23:59:59`) : new Date(todayY, todayObj.getMonth(), todayObj.getDate(), 23, 59, 59);
+
+    const todayEnd = new Date(todayY, todayObj.getMonth(), todayObj.getDate(), 23, 59, 59);
+    if (end > todayEnd || !endDateStr) {
+        end = todayEnd;
     }
-    let end = endDateStr ? new Date(endDateStr) : new Date(today);
-    if (end > today) end = new Date(today);
 
     // Limit evaluation to max past 60 days to keep performance high
-    const maxPast = new Date(today);
-    maxPast.setDate(maxPast.getDate() - 60);
+    const maxPast = new Date(todayY, todayObj.getMonth(), todayObj.getDate() - 60);
     if (start < maxPast) start = new Date(maxPast);
 
     // Query excluded workdays set
@@ -2511,6 +2515,18 @@ async function calculateUserMissingWorkdays(assigneeId, userName, startDateStr, 
             }
         }
         curr.setDate(curr.getDate() + 1);
+    }
+
+    // Always ensure today is evaluated if today is Mon-Fri
+    const todayDayOfWeek = todayObj.getDay();
+    if (todayDayOfWeek >= 1 && todayDayOfWeek <= 5) {
+        if (!excludedDatesSet.has(todayStr) && !workdays.some(w => w.date === todayStr)) {
+            workdays.push({
+                date: todayStr,
+                dayName: dayNames[todayDayOfWeek]
+            });
+            workdays.sort((a, b) => a.date.localeCompare(b.date));
+        }
     }
 
     if (workdays.length === 0) {
