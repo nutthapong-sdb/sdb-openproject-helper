@@ -355,8 +355,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 else if (rank === 2) nameStyle += ' color: #e0e0e0; font-weight: bold;';
                 else if (rank === 3) nameStyle += ' color: #ffcc80; font-weight: bold;';
 
-                const rawHours = typeof u.total_hours === 'number' ? u.total_hours : parseFloat(u.total_hours || 0);
-                const displayHours = rawHours.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+                const rawWork = typeof u.work_hours === 'number' ? u.work_hours : parseFloat(u.work_hours || 0);
+                const rawOt = typeof u.ot_hours === 'number' ? u.ot_hours : parseFloat(u.ot_hours || 0);
+
+                const displayWork = rawWork.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+                const displayOt = rawOt.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
                 let missingBadgeHtml = '';
                 const mInfo = u.missing_info || { missingCount: 0, totalMissingHours: 0, missingDays: [] };
@@ -366,8 +369,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 tr.style.cursor = 'pointer';
                 tr.innerHTML = `
-                    <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; font-size: 1rem; color: ${rank <= 3 ? 'var(--primary-color)' : '#aaa'};">${rank}</td>
-                    <td style="padding: 10px; border-bottom: 1px solid #333;">
+                    <td style="padding: 10px 4px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; font-size: 0.95rem; color: ${rank <= 3 ? 'var(--primary-color)' : '#aaa'};">${rank}</td>
+                    <td style="padding: 10px 6px; border-bottom: 1px solid #333;">
                         <div style="display: flex; align-items: center; width: 100%;">
                             <div class="rank-avatar-container" style="flex-shrink: 0;">
                                  ${iconHtml}
@@ -383,7 +386,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                             </div>
                         </div>
                     </td>
-                    <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; color: var(--primary-color); font-size: ${rank <= 3 ? '1.1rem' : '0.9rem'};">${displayHours} ชม.</td>
+                    <td style="padding: 10px 4px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; color: var(--primary-color); font-size: ${rank <= 3 ? '1.05rem' : '0.88rem'};">${displayWork}</td>
+                    <td style="padding: 10px 4px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; color: #ffb74d; font-size: ${rank <= 3 ? '1.05rem' : '0.88rem'};">${displayOt}</td>
                 `;
                 tbody.appendChild(tr);
 
@@ -409,7 +413,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
 
                 detailsTr.innerHTML = `
-                    <td colspan="3" style="padding: 12px 14px; border-bottom: 2px solid #444; background: rgba(0,0,0,0.3);">
+                    <td colspan="4" style="padding: 12px 14px; border-bottom: 2px solid #444; background: rgba(0,0,0,0.3);">
                         <div style="font-size: 0.83rem; font-weight: 600; color: #ffca28; margin-bottom: 8px;">
                             <span>⚠️ รายการวันจันทร์-ศุกร์ที่ยังลงเวลาไม่ครบ 8 ชม. ของ ${u.name || 'User'} (เป้าหมาย 8.0 ชม./วัน):</span>
                         </div>

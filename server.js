@@ -1406,6 +1406,14 @@ db.serialize(() => {
             if (!hasMissingJson) {
                 db.run("ALTER TABLE ranking_cache ADD COLUMN missing_json TEXT");
             }
+            const hasWorkHours = columns.some(c => c.name === 'work_hours');
+            if (!hasWorkHours) {
+                db.run("ALTER TABLE ranking_cache ADD COLUMN work_hours REAL DEFAULT 0");
+            }
+            const hasOtHours = columns.some(c => c.name === 'ot_hours');
+            if (!hasOtHours) {
+                db.run("ALTER TABLE ranking_cache ADD COLUMN ot_hours REAL DEFAULT 0");
+            }
         }
     });
 
@@ -2674,6 +2682,47 @@ async function recalculateAndCacheRanking() {
     });
 
     for (const r of rows) {
+        // Calculate work_hours (up to 8.0/day) vs ot_hours (> 8.0/day)
+        const dailyTotals = await new Promise(resolve => {
+            const queryDaily = `
+                SELECT spent_on, SUM(hours) as day_hours FROM (
+                    SELECT spent_on, hours
+                    FROM openproject_time_entries
+                    WHERE (user_id = CAST(? AS TEXT) OR LOWER(TRIM(user_name)) = LOWER(TRIM(?)))
+                    ${opDateCond}
+
+                    UNION ALL
+
+                    SELECT COALESCE(NULLIF(start_date, ''), DATE(created_at)) as spent_on, CAST(spent_hours AS REAL) as hours
+                    FROM task_history h
+                    WHERE (user_id = CAST(? AS TEXT) OR user_id = CAST(? AS TEXT))
+                    ${localDateCond}
+                )
+                GROUP BY spent_on
+            `;
+            const paramsDaily = [
+                String(r.assignee_id), (r.name || '').trim(), ...opParams,
+                String(r.assignee_id), (r.name || '').trim(), ...localParams
+            ];
+            db.all(queryDaily, paramsDaily, (err, dRows) => {
+                resolve(dRows || []);
+            });
+        });
+
+        let workH = 0;
+        let otH = 0;
+        for (const dr of dailyTotals) {
+            const dh = parseFloat(dr.day_hours || 0);
+            if (dh > 0) {
+                workH += Math.min(8.0, dh);
+                otH += Math.max(0.0, dh - 8.0);
+            }
+        }
+
+        r.work_hours = Math.round(workH * 10) / 10;
+        r.ot_hours = Math.round(otH * 10) / 10;
+        r.total_hours = Math.round((r.work_hours + r.ot_hours) * 10) / 10;
+
         r.missing_info = await calculateUserMissingWorkdays(r.assignee_id, r.name, activeStartDate, activeEndDate);
     }
 
@@ -2681,11 +2730,11 @@ async function recalculateAndCacheRanking() {
         db.serialize(() => {
             db.run("DELETE FROM ranking_cache");
             const stmt = db.prepare(`
-                INSERT INTO ranking_cache (assignee_id, name, total_hours, task_count, data_source, missing_json, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO ranking_cache (assignee_id, name, total_hours, work_hours, ot_hours, task_count, data_source, missing_json, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             `);
             rows.forEach(r => {
-                stmt.run([r.assignee_id, r.name, r.total_hours, r.task_count, r.data_source, JSON.stringify(r.missing_info || {})]);
+                stmt.run([r.assignee_id, r.name, r.total_hours, r.work_hours || 0, r.ot_hours || 0, r.task_count, r.data_source, JSON.stringify(r.missing_info || {})]);
             });
             stmt.finalize((err) => err ? reject(err) : resolve());
         });
@@ -2754,7 +2803,7 @@ app.get('/api/users-stats', async (req, res) => {
 
         // Query directly from ranking_cache table
         let rows = await new Promise(resolve => {
-            db.all("SELECT assignee_id, name, total_hours, task_count, data_source, missing_json, updated_at FROM ranking_cache ORDER BY total_hours DESC, task_count DESC, name ASC", [], (err, r) => {
+            db.all("SELECT assignee_id, name, total_hours, work_hours, ot_hours, task_count, data_source, missing_json, updated_at FROM ranking_cache ORDER BY total_hours DESC, task_count DESC, name ASC", [], (err, r) => {
                 resolve(r || []);
             });
         });
@@ -2798,6 +2847,8 @@ app.get('/api/users-stats', async (req, res) => {
                 assignee_id: r.assignee_id,
                 name: r.name,
                 total_hours: r.total_hours,
+                work_hours: r.work_hours || 0,
+                ot_hours: r.ot_hours || 0,
                 task_count: r.task_count,
                 data_source: r.data_source,
                 missing_info: missingInfo
