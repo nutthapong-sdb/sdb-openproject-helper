@@ -449,6 +449,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             const unloggedCard = document.getElementById('unloggedWorkdaysCard');
             const unloggedContainer = document.getElementById('unloggedWorkdaysContainer');
             const unloggedBadge = document.getElementById('unloggedCountBadge');
+            const unloggedTitle = document.getElementById('unloggedCardTitle');
+
+            const isAdminUser = currentUserRole === 'admin' || currentUserRole === 'root';
+
+            if (unloggedTitle) {
+                unloggedTitle.textContent = isAdminUser ? 'ยังไม่ได้กรอก' : 'ช่วงเวลาค้างที่ยังไม่ได้กรอก (เป้าหมาย 8.0 ชม./วัน)';
+            }
 
             if (unloggedCard && unloggedContainer) {
                 const loggedInUser = users.find(u => 
@@ -473,6 +480,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (myMInfo.missingDays && myMInfo.missingDays.length > 0) {
                     const rowsHtml = myMInfo.missingDays.map(d => {
                         const fmtDate = formatDateDisplay(d.date);
+                        const excludeBtnHtml = isAdminUser ? `
+                            <button type="button" onclick="window.addExcludedDatePrompt('${d.date}')" class="fill-form-chip-btn" style="background: #e53935; color: #fff; margin-left: 4px;" title="ยกเว้นวันนี้นำออกจากรายการวันค้างสำหรับทุกคน">
+                                🚫 ยกเว้น
+                            </button>
+                        ` : '';
                         return `
                             <tr style="border-bottom: 1px solid #333;">
                                 <td style="padding: 6px 10px; font-weight: 500;">${fmtDate} (${d.dayName})</td>
@@ -482,6 +494,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     <button type="button" onclick="window.fillTaskFormFromMissing('${d.date}', ${d.missingHours})" class="fill-form-chip-btn" title="คลิกเพื่อนำวันที่และชั่วโมงขาดไปกรอกในฟอร์ม">
                                         ➕ กรอกข้อมูล (${d.missingHours.toFixed(1)} ชม.)
                                     </button>
+                                    ${excludeBtnHtml}
                                 </td>
                             </tr>
                         `;
@@ -1588,6 +1601,103 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     };
 
+    // Exclude Workdays Tab & Management Functions
+    const loadExcludedDates = async () => {
+        const container = document.getElementById('excludedDatesContainer');
+        const yearFilter = document.getElementById('excludedYearFilter');
+        const addBtn = document.getElementById('addExcludedDateBtn');
+        if (!container) return;
+
+        const isAdmin = currentUserRole === 'admin' || currentUserRole === 'root';
+        if (addBtn) addBtn.style.display = isAdmin ? 'inline-block' : 'none';
+
+        const year = yearFilter ? yearFilter.value : '2026';
+        try {
+            const res = await fetch(`/api/excluded-workdays?year=${year}`);
+            const data = await res.json();
+
+            if (!Array.isArray(data) || data.length === 0) {
+                container.innerHTML = `<div style="text-align: center; color: #aaa; padding: 14px; font-size: 0.85rem;">ไม่พบรายการวันที่ยกเว้นในระบบ</div>`;
+                return;
+            }
+
+            const dayNames = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+
+            const rowsHtml = data.map(item => {
+                const fmtDate = formatDateDisplay(item.excluded_date);
+                const dObj = new Date(item.excluded_date);
+                const dayName = !isNaN(dObj.getTime()) ? dayNames[dObj.getDay()] : '';
+                const actionsHtml = isAdmin ? `
+                    <button type="button" onclick="window.editExcludedDate(${item.id}, '${item.excluded_date}', '${(item.reason || '').replace(/'/g, "\\'")}')" class="fill-form-chip-btn" style="background: #0288d1; color: #fff; padding: 2px 7px; font-size: 0.73rem;">✏️ แก้ไข</button>
+                    <button type="button" onclick="window.deleteExcludedDate(${item.id}, '${item.excluded_date}')" class="fill-form-chip-btn" style="background: #e53935; color: #fff; padding: 2px 7px; font-size: 0.73rem; margin-left: 3px;">🗑️ ลบ</button>
+                ` : '<span style="color: #666; font-size: 0.75rem;">-</span>';
+
+                return `
+                    <tr style="border-bottom: 1px solid #333;">
+                        <td style="padding: 6px 8px; font-weight: 500;">${fmtDate} (${dayName})</td>
+                        <td style="padding: 6px 8px; color: #ffca28;">${item.reason || 'วันหยุด/ยกเว้น'}</td>
+                        <td style="padding: 6px 8px; color: #888; font-size: 0.78rem;">${item.created_by || 'Admin'}</td>
+                        <td style="padding: 6px 8px; text-align: right;">${actionsHtml}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            container.innerHTML = `
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.83rem; color: #eee; background: #1f1f1f; border-radius: 6px; overflow: hidden;">
+                    <thead>
+                        <tr style="background: #2b2b2b; color: #ccc; border-bottom: 1px solid #444;">
+                            <th style="padding: 6px 8px; text-align: left;">วันที่ยกเว้น (วัน)</th>
+                            <th style="padding: 6px 8px; text-align: left;">เหตุผล</th>
+                            <th style="padding: 6px 8px; text-align: left;">ผู้บันทึก</th>
+                            <th style="padding: 6px 8px; text-align: right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowsHtml}
+                    </tbody>
+                </table>
+            `;
+        } catch (e) {
+            container.innerHTML = `<div style="text-align: center; color: #e53935; padding: 10px;">Error loading excluded dates: ${e.message}</div>`;
+        }
+    };
+
+    // Setup Tab Switching for Unlogged Workdays Panel
+    const tabUnloggedBtn = document.getElementById('tabUnloggedTasksBtn');
+    const tabExcludedBtn = document.getElementById('tabExcludedDatesBtn');
+    const viewUnlogged = document.getElementById('tabViewUnloggedTasks');
+    const viewExcluded = document.getElementById('tabViewExcludedDates');
+    const unloggedBadge = document.getElementById('unloggedCountBadge');
+    const yearFilter = document.getElementById('excludedYearFilter');
+    const addExBtn = document.getElementById('addExcludedDateBtn');
+
+    if (tabUnloggedBtn && tabExcludedBtn) {
+        tabUnloggedBtn.addEventListener('click', () => {
+            tabUnloggedBtn.classList.add('active');
+            tabExcludedBtn.classList.remove('active');
+            if (viewUnlogged) viewUnlogged.style.display = 'block';
+            if (viewExcluded) viewExcluded.style.display = 'none';
+            if (unloggedBadge) unloggedBadge.style.display = 'inline-block';
+        });
+
+        tabExcludedBtn.addEventListener('click', () => {
+            tabExcludedBtn.classList.add('active');
+            tabUnloggedBtn.classList.remove('active');
+            if (viewUnlogged) viewUnlogged.style.display = 'none';
+            if (viewExcluded) viewExcluded.style.display = 'block';
+            if (unloggedBadge) unloggedBadge.style.display = 'none';
+            loadExcludedDates();
+        });
+    }
+
+    if (yearFilter) {
+        yearFilter.addEventListener('change', () => loadExcludedDates());
+    }
+
+    if (addExBtn) {
+        addExBtn.addEventListener('click', () => window.addExcludedDatePrompt());
+    }
+
     // Expose fillTaskFormFromMissing to global scope
     window.fillTaskFormFromMissing = (dateStr, remainingHours) => {
         const startDateInput = document.getElementById('startDate');
@@ -1619,6 +1729,146 @@ document.addEventListener('DOMContentLoaded', async () => {
                 timer: 1800,
                 showConfirmButton: false
             });
+        }
+    };
+
+    // Admin Action: Prompt to add excluded date
+    window.addExcludedDatePrompt = async (defaultDate = '') => {
+        if (currentUserRole !== 'admin' && currentUserRole !== 'root') {
+            return Swal.fire('Permission Denied', 'เฉพาะ Admin เท่านั้นที่สามารถจัดการวันที่ยกเว้นได้', 'warning');
+        }
+
+        const { value: formValues } = await Swal.fire({
+            title: 'เพิ่มรายการวันที่ยกเว้น',
+            html: `
+                <div style="display: flex; flex-direction: column; gap: 10px; text-align: left;">
+                    <div>
+                        <label style="display: block; font-size: 0.82rem; color: #aaa; margin-bottom: 4px;">วันที่ยกเว้น (Date):</label>
+                        <input id="swal-ex-date" type="date" class="swal2-input" value="${defaultDate}" style="margin: 0; width: 100%; box-sizing: border-box;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.82rem; color: #aaa; margin-bottom: 4px;">เหตุผล / หมายเหตุ (Reason):</label>
+                        <input id="swal-ex-reason" type="text" class="swal2-input" placeholder="เช่น วันหยุดนักขัตฤกษ์, กิจกรรมบริษัท" style="margin: 0; width: 100%; box-sizing: border-box;">
+                    </div>
+                </div>
+            `,
+            focusConfirm: false,
+            showCancelButton: true,
+            confirmButtonText: 'บันทึกวันยกเว้น',
+            confirmButtonColor: '#388e3c',
+            preConfirm: () => {
+                const date = document.getElementById('swal-ex-date').value;
+                const reason = document.getElementById('swal-ex-reason').value;
+                if (!date) {
+                    Swal.showValidationMessage('กรุณาระบุวันที่ต้องการยกเว้น');
+                    return false;
+                }
+                return { date, reason };
+            }
+        });
+
+        if (formValues) {
+            try {
+                const res = await safeFetchJson('/api/admin/excluded-workdays', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formValues)
+                });
+                if (res && res.ok) {
+                    if (typeof showToast === 'function') showToast(`เพิ่มวันที่ยกเว้น ${formatDateDisplay(formValues.date)} สำเร็จ`, 'success');
+                    else Swal.fire('สำเร็จ', `เพิ่มวันที่ยกเว้นเรียบร้อยแล้ว`, 'success');
+                    await loadUserStats();
+                    await loadExcludedDates();
+                } else {
+                    Swal.fire('ข้อผิดพลาด', res.error || 'ไม่สามารถเพิ่มวันที่ยกเว้นได้', 'error');
+                }
+            } catch (e) {
+                Swal.fire('ข้อผิดพลาด', e.message, 'error');
+            }
+        }
+    };
+
+    // Admin Action: Edit excluded date
+    window.editExcludedDate = async (id, currentDate, currentReason) => {
+        if (currentUserRole !== 'admin' && currentUserRole !== 'root') return;
+
+        const { value: formValues } = await Swal.fire({
+            title: 'แก้ไขรายการวันที่ยกเว้น',
+            html: `
+                <div style="display: flex; flex-direction: column; gap: 10px; text-align: left;">
+                    <div>
+                        <label style="display: block; font-size: 0.82rem; color: #aaa; margin-bottom: 4px;">วันที่ยกเว้น (Date):</label>
+                        <input id="swal-ex-date" type="date" class="swal2-input" value="${currentDate}" style="margin: 0; width: 100%; box-sizing: border-box;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.82rem; color: #aaa; margin-bottom: 4px;">เหตุผล / หมายเหตุ (Reason):</label>
+                        <input id="swal-ex-reason" type="text" class="swal2-input" value="${currentReason || ''}" style="margin: 0; width: 100%; box-sizing: border-box;">
+                    </div>
+                </div>
+            `,
+            focusConfirm: false,
+            showCancelButton: true,
+            confirmButtonText: 'บันทึกการแก้ไข',
+            confirmButtonColor: '#0288d1',
+            preConfirm: () => {
+                const date = document.getElementById('swal-ex-date').value;
+                const reason = document.getElementById('swal-ex-reason').value;
+                if (!date) {
+                    Swal.showValidationMessage('กรุณาระบุวันที่');
+                    return false;
+                }
+                return { date, reason };
+            }
+        });
+
+        if (formValues) {
+            try {
+                const res = await safeFetchJson(`/api/admin/excluded-workdays/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formValues)
+                });
+                if (res && res.ok) {
+                    if (typeof showToast === 'function') showToast(`แก้ไขรายการสำเร็จ`, 'success');
+                    else Swal.fire('สำเร็จ', `แก้ไขรายการเรียบร้อยแล้ว`, 'success');
+                    await loadUserStats();
+                    await loadExcludedDates();
+                } else {
+                    Swal.fire('ข้อผิดพลาด', res.error || 'ไม่สามารถแก้ไขรายการได้', 'error');
+                }
+            } catch (e) {
+                Swal.fire('ข้อผิดพลาด', e.message, 'error');
+            }
+        }
+    };
+
+    // Admin Action: Delete excluded date
+    window.deleteExcludedDate = async (id, dateStr) => {
+        if (currentUserRole !== 'admin' && currentUserRole !== 'root') return;
+
+        const confirm = await Swal.fire({
+            title: 'ยืนยันการลบรายการ',
+            text: `ต้องการลบวันที่ยกเว้น ${formatDateDisplay(dateStr)} ออกจากระบบหรือไม่? (ระบบจะนำกลับมาคิดคำนวณวันค้างตามปกติ)`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#e53935',
+            confirmButtonText: 'ยืนยันการลบ'
+        });
+
+        if (confirm.isConfirmed) {
+            try {
+                const res = await safeFetchJson(`/api/admin/excluded-workdays/${id}`, { method: 'DELETE' });
+                if (res && res.ok) {
+                    if (typeof showToast === 'function') showToast(`ลบรายการวันที่ยกเว้นสำเร็จ`, 'success');
+                    else Swal.fire('สำเร็จ', `ลบรายการวันที่ยกเว้นเรียบร้อยแล้ว`, 'success');
+                    await loadUserStats();
+                    await loadExcludedDates();
+                } else {
+                    Swal.fire('ข้อผิดพลาด', res.error || 'ไม่สามารถลบรายการได้', 'error');
+                }
+            } catch (e) {
+                Swal.fire('ข้อผิดพลาด', e.message, 'error');
+            }
         }
     };
 

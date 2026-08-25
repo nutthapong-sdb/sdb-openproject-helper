@@ -1416,6 +1416,15 @@ db.serialize(() => {
         sync_date TEXT NOT NULL,
         synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    // Excluded Workdays Table (Holidays / Special Exclusions)
+    db.run(`CREATE TABLE IF NOT EXISTS excluded_workdays (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        excluded_date TEXT UNIQUE NOT NULL,
+        reason TEXT DEFAULT '',
+        created_by TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
 });
 
 app.get('/api/wfh/defaults', (req, res) => {
@@ -2477,6 +2486,14 @@ async function calculateUserMissingWorkdays(assigneeId, userName, startDateStr, 
     maxPast.setDate(maxPast.getDate() - 60);
     if (start < maxPast) start = new Date(maxPast);
 
+    // Query excluded workdays set
+    const excludedDatesSet = await new Promise(resolve => {
+        db.all("SELECT excluded_date FROM excluded_workdays", [], (err, rows) => {
+            const set = new Set((rows || []).map(r => r.excluded_date));
+            resolve(set);
+        });
+    });
+
     const workdays = [];
     const curr = new Date(start);
     while (curr <= end) {
@@ -2485,10 +2502,13 @@ async function calculateUserMissingWorkdays(assigneeId, userName, startDateStr, 
             const y = curr.getFullYear();
             const m = String(curr.getMonth() + 1).padStart(2, '0');
             const d = String(curr.getDate()).padStart(2, '0');
-            workdays.push({
-                date: `${y}-${m}-${d}`,
-                dayName: dayNames[dayOfWeek]
-            });
+            const dateStr = `${y}-${m}-${d}`;
+            if (!excludedDatesSet.has(dateStr)) {
+                workdays.push({
+                    date: dateStr,
+                    dayName: dayNames[dayOfWeek]
+                });
+            }
         }
         curr.setDate(curr.getDate() + 1);
     }
@@ -2790,6 +2810,95 @@ app.post('/api/admin/ranking/settings', (req, res) => {
                 res.json({ ok: true, settings: updated });
             });
         });
+    });
+});
+
+// GET Excluded Workdays (Public for all authenticated dashboard users)
+app.get('/api/excluded-workdays', (req, res) => {
+    const { year = '' } = req.query;
+    let query = "SELECT * FROM excluded_workdays WHERE 1=1";
+    const params = [];
+    if (year && year !== 'all') {
+        query += " AND strftime('%Y', excluded_date) = ?";
+        params.push(String(year));
+    }
+    query += " ORDER BY excluded_date DESC";
+
+    db.all(query, params, (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+// POST Admin Add Excluded Workday
+app.post('/api/admin/excluded-workdays', async (req, res) => {
+    const user = await getUserFromSessionOrKey(req);
+    if (!user || (user.role !== 'admin' && user.role !== 'root')) {
+        return res.status(403).json({ error: "Admin permission required" });
+    }
+
+    const { date, reason = '' } = req.body || {};
+    if (!date) {
+        return res.status(400).json({ error: "Missing date parameter" });
+    }
+
+    db.run(
+        "INSERT OR REPLACE INTO excluded_workdays (excluded_date, reason, created_by) VALUES (?, ?, ?)",
+        [date, reason, user.username || user.name || 'Admin'],
+        async function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                await recalculateAndCacheRanking();
+            } catch (calcErr) {
+                console.warn('[ExcludedWorkdays] Recalculation notice:', calcErr.message);
+            }
+            res.json({ ok: true, id: this.lastID, date, reason });
+        }
+    );
+});
+
+// PUT Admin Update Excluded Workday
+app.put('/api/admin/excluded-workdays/:id', async (req, res) => {
+    const user = await getUserFromSessionOrKey(req);
+    if (!user || (user.role !== 'admin' && user.role !== 'root')) {
+        return res.status(403).json({ error: "Admin permission required" });
+    }
+
+    const { id } = req.params;
+    const { date, reason = '' } = req.body || {};
+
+    db.run(
+        "UPDATE excluded_workdays SET excluded_date = ?, reason = ? WHERE id = ?",
+        [date, reason, id],
+        async function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                await recalculateAndCacheRanking();
+            } catch (calcErr) {
+                console.warn('[ExcludedWorkdays] Recalculation notice:', calcErr.message);
+            }
+            res.json({ ok: true });
+        }
+    );
+});
+
+// DELETE Admin Delete Excluded Workday
+app.delete('/api/admin/excluded-workdays/:id', async (req, res) => {
+    const user = await getUserFromSessionOrKey(req);
+    if (!user || (user.role !== 'admin' && user.role !== 'root')) {
+        return res.status(403).json({ error: "Admin permission required" });
+    }
+
+    const { id } = req.params;
+
+    db.run("DELETE FROM excluded_workdays WHERE id = ?", [id], async function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        try {
+            await recalculateAndCacheRanking();
+        } catch (calcErr) {
+            console.warn('[ExcludedWorkdays] Recalculation notice:', calcErr.message);
+        }
+        res.json({ ok: true });
     });
 });
 
