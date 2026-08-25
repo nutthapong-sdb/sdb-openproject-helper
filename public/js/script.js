@@ -353,7 +353,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 else if (rank === 2) nameStyle += ' color: #e0e0e0; font-weight: bold;';
                 else if (rank === 3) nameStyle += ' color: #ffcc80; font-weight: bold;';
 
-                const displayHours = typeof u.total_hours === 'number' ? u.total_hours.toFixed(1) : parseFloat(u.total_hours || 0).toFixed(1);
+                const rawHours = typeof u.total_hours === 'number' ? u.total_hours : parseFloat(u.total_hours || 0);
+                const displayHours = rawHours.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
                 tr.innerHTML = `
                     <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; font-size: 1rem; color: ${rank <= 3 ? 'var(--primary-color)' : '#aaa'};">${rank}</td>
@@ -1218,6 +1219,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         $('#rankingToPresentBtn').prop('disabled', !isAdmin).css('opacity', isAdmin ? '1' : '0.5');
         $('#saveRankingDateBtn').prop('disabled', !isAdmin).css('opacity', isAdmin ? '1' : '0.5');
     }
+
+    const applyPresetDateRange = (months, years = 0) => {
+        const today = new Date();
+        const endStr = today.toISOString().split('T')[0];
+        const startObj = new Date(today);
+        if (months > 0) startObj.setMonth(startObj.getMonth() - months);
+        if (years > 0) startObj.setFullYear(startObj.getFullYear() - years);
+        const startStr = startObj.toISOString().split('T')[0];
+
+        $('#rankingStartDateInput').val(startStr);
+        $('#rankingEndDateInput').val(endStr);
+        currentRankingMode = 'custom';
+        updateRankingModeUI();
+    };
+
+    $('#ranking1MonthBtn').on('click', function() { applyPresetDateRange(1); });
+    $('#ranking3MonthsBtn').on('click', function() { applyPresetDateRange(3); });
+    $('#ranking6MonthsBtn').on('click', function() { applyPresetDateRange(6); });
+    $('#ranking1YearBtn').on('click', function() { applyPresetDateRange(0, 1); });
 
     $('#rankingAllTimeBtn').on('click', function() {
         currentRankingMode = currentRankingMode === 'all' ? 'custom' : 'all';
