@@ -2310,16 +2310,11 @@ function parseIsoDuration(durationStr) {
 
 // Sync Time Entries directly from OpenProject API /api/v3/time_entries
 async function syncOpenProjectTimeEntries(apiKey) {
-    const url = `${HOST}/api/v3/time_entries?pageSize=500`;
     console.log('[TimeEntries] Syncing real time entries from OpenProject API...');
-    const result = await puppeteerFetch(url, { method: 'GET' }, apiKey);
-
-    if (result.status !== 200 || !result.data || !result.data._embedded) {
-        throw new Error((result.data && result.data.message) || result.error || `OpenProject API returned status ${result.status}`);
-    }
-
-    const elements = result.data._embedded.elements || [];
-    let syncedCount = 0;
+    let offset = 1;
+    const pageSize = 500;
+    let totalSynced = 0;
+    let totalInOp = 0;
 
     const stmt = db.prepare(`
         INSERT INTO openproject_time_entries (openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment, updated_at)
@@ -2336,28 +2331,52 @@ async function syncOpenProjectTimeEntries(apiKey) {
             updated_at=CURRENT_TIMESTAMP
     `);
 
-    db.serialize(() => {
-        elements.forEach(elem => {
-            const openproject_id = String(elem.id);
-            const spent_on = (elem.spentOn || '').slice(0, 10);
-            const hours = parseIsoDuration(elem.hours);
-            const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
-            const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
-            const user_name = elem._links && elem._links.user ? (elem._links.user.title || '') : '';
-            const work_package_id = elem._links && elem._links.workPackage ? elem._links.workPackage.href.split('/').pop() : '';
-            const work_package_title = elem._links && elem._links.workPackage ? (elem._links.workPackage.title || '') : '';
-            const project_name = elem._links && elem._links.project ? (elem._links.project.title || '') : '';
+    while (true) {
+        const url = `${HOST}/api/v3/time_entries?pageSize=${pageSize}&offset=${offset}`;
+        const result = await puppeteerFetch(url, { method: 'GET' }, apiKey);
 
-            stmt.run([openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment]);
-            syncedCount++;
+        if (result.status !== 200 || !result.data || !result.data._embedded) {
+            if (offset === 1) {
+                stmt.finalize();
+                throw new Error((result.data && result.data.message) || result.error || `OpenProject API returned status ${result.status}`);
+            }
+            break;
+        }
+
+        const elements = result.data._embedded.elements || [];
+        totalInOp = result.data.total || elements.length;
+
+        if (elements.length === 0) break;
+
+        db.serialize(() => {
+            elements.forEach(elem => {
+                const openproject_id = String(elem.id);
+                const spent_on = (elem.spentOn || '').slice(0, 10);
+                const hours = parseIsoDuration(elem.hours);
+                const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
+                const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
+                const user_name = elem._links && elem._links.user ? (elem._links.user.title || '') : '';
+                const work_package_id = elem._links && elem._links.workPackage ? elem._links.workPackage.href.split('/').pop() : '';
+                const work_package_title = elem._links && elem._links.workPackage ? (elem._links.workPackage.title || '') : '';
+                const project_name = elem._links && elem._links.project ? (elem._links.project.title || '') : '';
+
+                stmt.run([openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment]);
+                totalSynced++;
+            });
         });
-        stmt.finalize();
-    });
+
+        if (totalSynced >= totalInOp || elements.length < pageSize) {
+            break;
+        }
+        offset += elements.length;
+    }
+
+    stmt.finalize();
 
     return {
         ok: true,
-        count: syncedCount,
-        totalInOpenProject: result.data.total || elements.length
+        count: totalSynced,
+        totalInOpenProject: totalInOp
     };
 }
 
@@ -2380,6 +2399,26 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
 // GET User Stats for Dashboard (Ranked by logged hours from OpenProject API time entries within active date range)
 app.get('/api/users-stats', async (req, res) => {
     try {
+        const userApiKey = req.cookies.user_apikey;
+
+        // Auto-sync if user has API key and cache is empty or stale (>5 mins)
+        if (userApiKey) {
+            const cacheStatus = await new Promise(resolve => {
+                db.get("SELECT MAX(updated_at) as last_updated, COUNT(*) as cnt FROM openproject_time_entries", [], (err, row) => {
+                    resolve(row || { last_updated: null, cnt: 0 });
+                });
+            });
+
+            const isStale = !cacheStatus.last_updated || (Date.now() - new Date(cacheStatus.last_updated).getTime() > 5 * 60 * 1000);
+            if (cacheStatus.cnt === 0 || isStale || req.query.sync === '1') {
+                try {
+                    await syncOpenProjectTimeEntries(userApiKey);
+                } catch (syncErr) {
+                    console.warn('[UsersStats] Auto-sync notice:', syncErr.message);
+                }
+            }
+        }
+
         const settings = await getRankingSettings();
         const { activeStartDate, activeEndDate } = settings;
 
@@ -2413,16 +2452,23 @@ app.get('/api/users-stats', async (req, res) => {
                 COALESCE(t.op_task_count, h.local_task_count, 0) as task_count,
                 CASE WHEN t.total_op_hours IS NOT NULL THEN 'openproject_api' ELSE 'local_history' END as data_source
             FROM local_assignees a 
-            LEFT JOIN users u ON u.openproject_id = a.id
+            LEFT JOIN users u ON (u.openproject_id = CAST(a.id AS TEXT) OR u.id = CAST(a.id AS TEXT))
             LEFT JOIN (
                 SELECT 
                     user_id,
+                    user_name,
                     SUM(hours) as total_op_hours,
                     COUNT(DISTINCT work_package_id) as op_task_count
                 FROM openproject_time_entries t
                 WHERE 1=1 ${opDateCond}
-                GROUP BY user_id
-            ) t ON (t.user_id = CAST(a.id AS TEXT) OR t.user_id = u.openproject_id OR t.user_id = u.id)
+                GROUP BY user_id, user_name
+            ) t ON (
+                t.user_id = CAST(a.id AS TEXT) 
+                OR t.user_id = u.openproject_id 
+                OR t.user_id = u.id 
+                OR (t.user_name IS NOT NULL AND LOWER(TRIM(t.user_name)) = LOWER(TRIM(a.name)))
+                OR (t.user_name IS NOT NULL AND LOWER(TRIM(t.user_name)) = LOWER(TRIM(u.name)))
+            )
             LEFT JOIN (
                 SELECT 
                     user_id,

@@ -357,6 +357,39 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     };
 
+    const syncTimeBtn = document.getElementById('syncTimeEntriesBtn');
+    if (syncTimeBtn) {
+        syncTimeBtn.addEventListener('click', async () => {
+            const icon = document.getElementById('syncTimeEntriesIcon');
+            if (icon) icon.textContent = '⏳';
+            syncTimeBtn.disabled = true;
+
+            try {
+                const res = await fetch('/api/openproject/time-entries/sync', { method: 'POST' });
+                const data = await res.json();
+                if (res.ok && data.ok) {
+                    if (typeof showToast === 'function') {
+                        showToast(`ดึงข้อมูลเวลาจริงจาก OpenProject สำเร็จ (${data.count} รายการ)`, 'success');
+                    } else if (typeof Swal !== 'undefined') {
+                        Swal.fire({ icon: 'success', title: 'Sync Success', text: `ดึงข้อมูลเวลาจริงสำเร็จ (${data.count} รายการ)` });
+                    }
+                    await loadUserStats();
+                } else {
+                    const msg = data.error || 'Failed to sync time entries';
+                    if (typeof showToast === 'function') showToast(msg, 'error');
+                    else if (typeof Swal !== 'undefined') Swal.fire('Sync Failed', msg, 'error');
+                }
+            } catch (e) {
+                const msg = e.message || 'Error syncing time entries';
+                if (typeof showToast === 'function') showToast(msg, 'error');
+                else if (typeof Swal !== 'undefined') Swal.fire('Error', msg, 'error');
+            } finally {
+                if (icon) icon.textContent = '🔄';
+                syncTimeBtn.disabled = false;
+            }
+        });
+    }
+
     const deleteFromHistory = async (historyId, openprojectId, subject) => {
         // Confirmation Dialog
         const result = await Swal.fire({

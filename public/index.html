@@ -235,8 +235,14 @@
             <div class="right-column-wrapper"
                 style="flex: 5; display: flex; flex-direction: column; gap: 20px; min-width: 350px;">
                 <div class="panel right-panel-users" style="min-width: 0; display: flex; flex-direction: column;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                        <h2 style="margin: 0;">Ranking</h2>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 8px;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <h2 style="margin: 0;">Ranking</h2>
+                            <button id="syncTimeEntriesBtn" type="button" class="btn-secondary" style="padding: 4px 10px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; cursor: pointer;" title="ดึงข้อมูลชั่วโมงทำงานจริงจาก OpenProject API">
+                                <span id="syncTimeEntriesIcon">🔄</span>
+                                <span>Sync OpenProject Time</span>
+                            </button>
+                        </div>
                         <span id="rankingDateRangeBadge" style="font-size: 0.8rem; background: #333; color: #ffca28; padding: 4px 10px; border-radius: 12px; font-weight: 500;"></span>
                     </div>
                     <div class="users-stats-container" style="overflow-y: auto; flex: 1;">
