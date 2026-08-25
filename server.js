@@ -2479,11 +2479,14 @@ async function calculateUserMissingWorkdays(assigneeId, userName, startDateStr, 
     const todayStr = `${todayY}-${todayM}-${todayD}`;
 
     let start = startDateStr ? new Date(`${startDateStr}T00:00:00`) : new Date(todayY, todayObj.getMonth() - 1, todayObj.getDate());
-    let end = endDateStr ? new Date(`${endDateStr}T23:59:59`) : new Date(todayY, todayObj.getMonth(), todayObj.getDate(), 23, 59, 59);
-
-    const todayEnd = new Date(todayY, todayObj.getMonth(), todayObj.getDate(), 23, 59, 59);
-    if (end > todayEnd || !endDateStr) {
-        end = todayEnd;
+    
+    // Always extend end date to at least today so today's workday (e.g. Tuesday 25/8) is evaluated
+    let end = new Date(todayY, todayObj.getMonth(), todayObj.getDate(), 23, 59, 59);
+    if (endDateStr) {
+        const parsedEnd = new Date(`${endDateStr}T23:59:59`);
+        if (parsedEnd > end) {
+            end = parsedEnd;
+        }
     }
 
     // Limit evaluation to max past 60 days to keep performance high
@@ -2537,12 +2540,25 @@ async function calculateUserMissingWorkdays(assigneeId, userName, startDateStr, 
         const placeholders = workdays.map(() => '?').join(',');
         const query = `
             SELECT spent_on, SUM(hours) as day_hours
-            FROM openproject_time_entries
-            WHERE (user_id = ? OR LOWER(TRIM(user_name)) = LOWER(TRIM(?)))
-            AND spent_on IN (${placeholders})
+            FROM (
+                SELECT spent_on, hours
+                FROM openproject_time_entries
+                WHERE (user_id = ? OR LOWER(TRIM(user_name)) = LOWER(TRIM(?)))
+
+                UNION ALL
+
+                SELECT COALESCE(NULLIF(start_date, ''), DATE(created_at)) as spent_on, CAST(spent_hours AS REAL) as hours
+                FROM task_history
+                WHERE (user_id = ? OR user_id = ?)
+            )
+            WHERE spent_on IN (${placeholders})
             GROUP BY spent_on
         `;
-        const params = [String(assigneeId), (userName || '').trim(), ...workdays.map(w => w.date)];
+        const params = [
+            String(assigneeId), (userName || '').trim(),
+            String(assigneeId), String(userName || '').trim(),
+            ...workdays.map(w => w.date)
+        ];
         db.all(query, params, (err, rows) => {
             const map = {};
             (rows || []).forEach(r => {
