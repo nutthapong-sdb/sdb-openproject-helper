@@ -492,8 +492,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 <td style="padding: 6px 10px; text-align: center; color: #ff5252; font-weight: bold;">${d.missingHours.toFixed(1)} ชม.</td>
                                 <td style="padding: 6px 10px; text-align: right;">
                                     <div style="display: inline-flex; gap: 6px; align-items: center; justify-content: flex-end;">
-                                        <button type="button" onclick="window.fillTaskFormFromMissing('${d.date}', ${d.missingHours})" class="fill-form-chip-btn" title="คลิกเพื่อนำวันที่และชั่วโมงขาดไปกรอกในฟอร์ม">
-                                            กรอกข้อมูล (${d.missingHours.toFixed(1)} ชม.)
+                                        <button type="button" onclick="window.fillTaskFormFromMissing('${d.date}', ${d.missingHours})" class="fill-form-chip-btn" title="คลิกเพื่อนำวันที่ ${fmtDate} (${d.missingHours.toFixed(1)} ชม.) ไปกรอกในฟอร์ม">
+                                            เพิ่ม
                                         </button>
                                         ${excludeBtnHtml}
                                     </div>
