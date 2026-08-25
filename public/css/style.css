@@ -121,13 +121,13 @@ body {
 }
 
 .left-panel {
-    max-width: 500px;
+    max-width: none;
+    width: 100%;
 }
 
 .right-panel {
-    flex: 1.5;
-    /* Wider history panel */
-    min-width: 400px;
+    max-width: none;
+    width: 100%;
 }
 
 /* History Table */
