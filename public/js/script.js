@@ -356,9 +356,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const rawHours = typeof u.total_hours === 'number' ? u.total_hours : parseFloat(u.total_hours || 0);
                 const displayHours = rawHours.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
+                let missingBadgeHtml = '';
+                const mInfo = u.missing_info || { missingCount: 0, totalMissingHours: 0, missingDays: [] };
+                if (mInfo.missingCount > 0) {
+                    missingBadgeHtml = `<span class="missing-days-badge" title="คลิกชื่อเพื่อดูรายการวันจันทร์-ศุกร์ที่ยังลงเวลาไม่ครบ">(ขาด ${mInfo.missingCount} วัน / ${mInfo.totalMissingHours.toFixed(1)} ชม.)</span>`;
+                }
+
+                tr.style.cursor = 'pointer';
                 tr.innerHTML = `
                     <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; font-size: 1rem; color: ${rank <= 3 ? 'var(--primary-color)' : '#aaa'};">${rank}</td>
-                    <td style="padding: 10px; border-bottom: 1px solid #333; display: flex; align-items: center;">
+                    <td style="padding: 10px; border-bottom: 1px solid #333; display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">
                         <div class="rank-avatar-container">
                              ${iconHtml}
                              <div class="rank-frame">
@@ -366,10 +373,67 @@ document.addEventListener('DOMContentLoaded', async () => {
                              </div>
                         </div>
                         <span style="${nameStyle}" title="${u.name}">${u.name || 'Unknown'}</span>
+                        ${missingBadgeHtml}
                     </td>
                     <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; color: var(--primary-color); font-size: ${rank <= 3 ? '1.1rem' : '0.9rem'};">${displayHours} ชม.</td>
                 `;
                 tbody.appendChild(tr);
+
+                // Expandable subtable row for missing days
+                const detailsTr = document.createElement('tr');
+                detailsTr.id = `rank-details-${rank}`;
+                detailsTr.style.display = 'none';
+
+                let missingDaysRowsHtml = '';
+                if (mInfo.missingDays && mInfo.missingDays.length > 0) {
+                    missingDaysRowsHtml = mInfo.missingDays.map(d => {
+                        const fmtDate = formatDateDisplay(d.date);
+                        return `
+                            <tr style="border-bottom: 1px solid #333;">
+                                <td style="padding: 6px 10px;">${fmtDate} (${d.dayName})</td>
+                                <td style="padding: 6px 10px; text-align: center; color: #aaa;">${d.loggedHours.toFixed(1)} ชม.</td>
+                                <td style="padding: 6px 10px; text-align: center; color: #ff5252; font-weight: bold;">${d.missingHours.toFixed(1)} ชม.</td>
+                                <td style="padding: 6px 10px; text-align: right;">
+                                    <button type="button" onclick="window.fillTaskFormFromMissing('${d.date}', ${d.missingHours})" class="fill-form-chip-btn" title="คลิกเพื่อนำวันที่และชั่วโมงขาดไปกรอกในฟอร์ม">
+                                        ➕ กรอกข้อมูล (${d.missingHours.toFixed(1)} ชม.)
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('');
+                } else {
+                    missingDaysRowsHtml = `<tr><td colspan="4" style="padding: 10px; text-align: center; color: #4CAF50;">🎉 ลงเวลาครบถ้วนแล้วทุกวันจันทร์-ศุกร์ (8.0 ชม./วัน)</td></tr>`;
+                }
+
+                detailsTr.innerHTML = `
+                    <td colspan="3" style="padding: 12px 14px; border-bottom: 2px solid #444; background: rgba(0,0,0,0.3);">
+                        <div style="font-size: 0.83rem; font-weight: 600; color: #ffca28; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
+                            <span>⚠️ รายการวันจันทร์-ศุกร์ที่ยังลงเวลาไม่ครบ 8 ชม. (เป้าหมาย 8.0 ชม./วัน):</span>
+                            <span style="color: #aaa; font-weight: normal; font-size: 0.78rem;">คลิกปุ่ม ➕ กรอกข้อมูล เพื่อเติมเข้าฟอร์ม</span>
+                        </div>
+                        <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; color: #eee; background: #222; border-radius: 6px; overflow: hidden;">
+                            <thead>
+                                <tr style="background: #2d2d2d; color: #ccc; border-bottom: 1px solid #444;">
+                                    <th style="padding: 6px 10px; text-align: left;">วันที่ (วัน)</th>
+                                    <th style="padding: 6px 10px; text-align: center;">ลงแล้ว</th>
+                                    <th style="padding: 6px 10px; text-align: center;">ขาดอีก</th>
+                                    <th style="padding: 6px 10px; text-align: right;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${missingDaysRowsHtml}
+                            </tbody>
+                        </table>
+                    </td>
+                `;
+                tbody.appendChild(detailsTr);
+
+                // Toggle subtable expansion on row click
+                tr.addEventListener('click', (e) => {
+                    if (e.target.closest('button') || e.target.closest('a')) return;
+                    const isHidden = detailsTr.style.display === 'none';
+                    detailsTr.style.display = isHidden ? 'table-row' : 'none';
+                });
             });
 
             const syncBtn = document.getElementById('syncTimeEntriesBtn');
@@ -1446,6 +1510,38 @@ document.addEventListener('DOMContentLoaded', async () => {
             } catch (e) {
                 Swal.fire('Error', e.message, 'error');
             }
+        }
+    // Expose fillTaskFormFromMissing to global scope
+    window.fillTaskFormFromMissing = (dateStr, remainingHours) => {
+        const startDateInput = document.getElementById('startDate');
+        const dueDateInput = document.getElementById('dueDate');
+        const spentHoursInput = document.getElementById('spentHours');
+        const taskNameInput = document.getElementById('taskName');
+
+        if (startDateInput) startDateInput.value = dateStr;
+        if (dueDateInput) dueDateInput.value = dateStr;
+        if (spentHoursInput) spentHoursInput.value = remainingHours;
+
+        // Scroll smoothly to form card
+        const formCard = document.querySelector('.panel-task') || taskNameInput;
+        if (formCard) {
+            formCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        if (taskNameInput) {
+            setTimeout(() => taskNameInput.focus(), 350);
+        }
+
+        const dateFmt = formatDateDisplay(dateStr);
+        if (typeof showToast === 'function') {
+            showToast(`วางข้อมูลวันที่ ${dateFmt} (${remainingHours} ชม.) ลงในฟอร์มแล้ว`, 'success');
+        } else if (typeof Swal !== 'undefined') {
+            Swal.fire({
+                icon: 'success',
+                title: 'วางข้อมูลเรียบร้อย',
+                text: `ใส่วันที่ ${dateFmt} และจำนวนชั่วโมง ${remainingHours} ชม. ลงในฟอร์มแล้ว`,
+                timer: 1800,
+                showConfirmButton: false
+            });
         }
     };
 

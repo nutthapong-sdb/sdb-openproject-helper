@@ -1396,6 +1396,7 @@ db.serialize(() => {
         total_hours REAL DEFAULT 0,
         task_count INTEGER DEFAULT 0,
         data_source TEXT,
+        missing_json TEXT,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -2450,6 +2451,88 @@ async function getUserFromSessionOrKey(req) {
     });
 }
 
+// Helper: Calculate Mon-Fri workdays where logged time < 8.0 hours for a given user within active date range
+async function calculateUserMissingWorkdays(assigneeId, userName, startDateStr, endDateStr) {
+    const dayNames = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+    const today = new Date();
+
+    let start = startDateStr ? new Date(startDateStr) : new Date(today);
+    if (!startDateStr) {
+        start.setMonth(start.getMonth() - 1);
+    }
+    let end = endDateStr ? new Date(endDateStr) : new Date(today);
+    if (end > today) end = new Date(today);
+
+    // Limit evaluation to max past 60 days to keep performance high
+    const maxPast = new Date(today);
+    maxPast.setDate(maxPast.getDate() - 60);
+    if (start < maxPast) start = new Date(maxPast);
+
+    const workdays = [];
+    const curr = new Date(start);
+    while (curr <= end) {
+        const dayOfWeek = curr.getDay();
+        if (dayOfWeek >= 1 && dayOfWeek <= 5) { // Mon-Fri
+            const y = curr.getFullYear();
+            const m = String(curr.getMonth() + 1).padStart(2, '0');
+            const d = String(curr.getDate()).padStart(2, '0');
+            workdays.push({
+                date: `${y}-${m}-${d}`,
+                dayName: dayNames[dayOfWeek]
+            });
+        }
+        curr.setDate(curr.getDate() + 1);
+    }
+
+    if (workdays.length === 0) {
+        return { missingCount: 0, totalMissingHours: 0, missingDays: [] };
+    }
+
+    const loggedByDate = await new Promise(resolve => {
+        const placeholders = workdays.map(() => '?').join(',');
+        const query = `
+            SELECT spent_on, SUM(hours) as day_hours
+            FROM openproject_time_entries
+            WHERE (user_id = ? OR LOWER(TRIM(user_name)) = LOWER(TRIM(?)))
+            AND spent_on IN (${placeholders})
+            GROUP BY spent_on
+        `;
+        const params = [String(assigneeId), (userName || '').trim(), ...workdays.map(w => w.date)];
+        db.all(query, params, (err, rows) => {
+            const map = {};
+            (rows || []).forEach(r => {
+                if (r.spent_on) map[r.spent_on] = parseFloat(r.day_hours || 0);
+            });
+            resolve(map);
+        });
+    });
+
+    const missingDays = [];
+    let totalMissingHours = 0;
+
+    workdays.forEach(w => {
+        const logged = loggedByDate[w.date] || 0;
+        if (logged < 8.0) {
+            const missing = Math.round((8.0 - logged) * 10) / 10;
+            totalMissingHours += missing;
+            missingDays.push({
+                date: w.date,
+                dayName: w.dayName,
+                loggedHours: logged,
+                missingHours: missing
+            });
+        }
+    });
+
+    missingDays.sort((a, b) => b.date.localeCompare(a.date));
+
+    return {
+        missingCount: missingDays.length,
+        totalMissingHours: Math.round(totalMissingHours * 10) / 10,
+        missingDays
+    };
+}
+
 // Helper: Calculate ranking scores from SQLite tables and update ranking_cache table
 async function recalculateAndCacheRanking() {
     console.log('[RankingCache] Recalculating and caching ranking metrics in database...');
@@ -2522,15 +2605,19 @@ async function recalculateAndCacheRanking() {
         db.all(query, params, (err, r) => err ? reject(err) : resolve(r || []));
     });
 
+    for (const r of rows) {
+        r.missing_info = await calculateUserMissingWorkdays(r.assignee_id, r.name, activeStartDate, activeEndDate);
+    }
+
     await new Promise((resolve, reject) => {
         db.serialize(() => {
             db.run("DELETE FROM ranking_cache");
             const stmt = db.prepare(`
-                INSERT INTO ranking_cache (assignee_id, name, total_hours, task_count, data_source, updated_at)
-                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO ranking_cache (assignee_id, name, total_hours, task_count, data_source, missing_json, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             `);
             rows.forEach(r => {
-                stmt.run([r.assignee_id, r.name, r.total_hours, r.task_count, r.data_source]);
+                stmt.run([r.assignee_id, r.name, r.total_hours, r.task_count, r.data_source, JSON.stringify(r.missing_info || {})]);
             });
             stmt.finalize((err) => err ? reject(err) : resolve());
         });
@@ -2599,7 +2686,7 @@ app.get('/api/users-stats', async (req, res) => {
 
         // Query directly from ranking_cache table
         let rows = await new Promise(resolve => {
-            db.all("SELECT assignee_id, name, total_hours, task_count, data_source, updated_at FROM ranking_cache ORDER BY total_hours DESC, task_count DESC, name ASC", [], (err, r) => {
+            db.all("SELECT assignee_id, name, total_hours, task_count, data_source, missing_json, updated_at FROM ranking_cache ORDER BY total_hours DESC, task_count DESC, name ASC", [], (err, r) => {
                 resolve(r || []);
             });
         });
@@ -2634,9 +2721,24 @@ app.get('/api/users-stats', async (req, res) => {
             canSyncToday = syncCount < 1;
         }
 
+        const formattedUsers = rows.map(r => {
+            let missingInfo = { missingCount: 0, totalMissingHours: 0, missingDays: [] };
+            try {
+                if (r.missing_json) missingInfo = JSON.parse(r.missing_json);
+            } catch { }
+            return {
+                assignee_id: r.assignee_id,
+                name: r.name,
+                total_hours: r.total_hours,
+                task_count: r.task_count,
+                data_source: r.data_source,
+                missing_info: missingInfo
+            };
+        });
+
         res.json({
             settings,
-            users: rows || [],
+            users: formattedUsers,
             lastSync,
             canSyncToday,
             isAdmin: !!isAdmin

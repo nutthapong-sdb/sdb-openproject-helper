@@ -672,3 +672,47 @@ input[type="date"] {
     cursor: not-allowed;
     transform: none;
 }
+
+/* Missing Days Badge */
+.missing-days-badge {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 0.75rem;
+    color: #ff5252;
+    background: rgba(255, 82, 82, 0.12);
+    border: 1px solid rgba(255, 82, 82, 0.3);
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-weight: 500;
+    vertical-align: middle;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.missing-days-badge:hover {
+    background: rgba(255, 82, 82, 0.25);
+    border-color: #ff5252;
+    transform: scale(1.03);
+}
+
+/* Action button inside missing days subtable */
+.fill-form-chip-btn {
+    background: var(--primary-color, #4CAF50);
+    color: #000;
+    border: none;
+    padding: 3px 9px;
+    border-radius: 10px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.fill-form-chip-btn:hover {
+    background: #66bb6a;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(76, 175, 80, 0.4);
+}
