@@ -2641,6 +2641,8 @@ async function recalculateAndCacheRanking() {
         SELECT 
             a.id as assignee_id,
             COALESCE(u.name, a.name) as name, 
+            COALESCE(daily_agg.total_work_hours, 0) as work_hours,
+            COALESCE(daily_agg.total_ot_hours, 0) as ot_hours,
             COALESCE(t.total_op_hours, h.total_local_hours, 0) as total_hours,
             COALESCE(t.op_task_count, h.local_task_count, 0) as task_count,
             CASE WHEN t.total_op_hours IS NOT NULL THEN 'openproject_api' ELSE 'local_history' END as data_source
@@ -2671,57 +2673,59 @@ async function recalculateAndCacheRanking() {
             WHERE 1=1 ${localDateCond}
             GROUP BY user_id
         ) h ON (h.user_id = CAST(a.id AS TEXT) OR h.user_id = u.id)
+        LEFT JOIN (
+            SELECT 
+                user_key,
+                SUM(CASE WHEN day_hours > 8.0 THEN 8.0 ELSE day_hours END) as total_work_hours,
+                SUM(CASE WHEN day_hours > 8.0 THEN day_hours - 8.0 ELSE 0.0 END) as total_ot_hours
+            FROM (
+                SELECT 
+                    t.user_id as user_key,
+                    t.spent_on,
+                    SUM(t.hours) as day_hours
+                FROM openproject_time_entries t
+                WHERE 1=1 ${opDateCond}
+                GROUP BY t.user_id, t.spent_on
+
+                UNION ALL
+
+                SELECT 
+                    h.user_id as user_key,
+                    COALESCE(NULLIF(h.start_date, ''), DATE(h.created_at)) as spent_on,
+                    SUM(CAST(h.spent_hours AS REAL)) as day_hours
+                FROM task_history h
+                WHERE 1=1 ${localDateCond}
+                GROUP BY h.user_id, spent_on
+            )
+            GROUP BY user_key
+        ) daily_agg ON (
+            daily_agg.user_key = CAST(a.id AS TEXT)
+            OR daily_agg.user_key = u.openproject_id
+            OR daily_agg.user_key = u.id
+        )
         GROUP BY a.id, a.name, u.name
         ORDER BY total_hours DESC, task_count DESC, COALESCE(u.name, a.name) ASC
     `;
 
-    const params = [...opParams, ...localParams];
+    const params = [...opParams, ...localParams, ...opParams, ...localParams];
 
     const rows = await new Promise((resolve, reject) => {
         db.all(query, params, (err, r) => err ? reject(err) : resolve(r || []));
     });
 
     for (const r of rows) {
-        // Calculate work_hours (up to 8.0/day) vs ot_hours (> 8.0/day)
-        const dailyTotals = await new Promise(resolve => {
-            const queryDaily = `
-                SELECT spent_on, SUM(hours) as day_hours FROM (
-                    SELECT spent_on, hours
-                    FROM openproject_time_entries
-                    WHERE (user_id = CAST(? AS TEXT) OR LOWER(TRIM(user_name)) = LOWER(TRIM(?)))
-                    ${opDateCond}
+        const rawTotal = typeof r.total_hours === 'number' ? r.total_hours : parseFloat(r.total_hours || 0);
+        let workH = typeof r.work_hours === 'number' ? r.work_hours : parseFloat(r.work_hours || 0);
+        let otH = typeof r.ot_hours === 'number' ? r.ot_hours : parseFloat(r.ot_hours || 0);
 
-                    UNION ALL
-
-                    SELECT COALESCE(NULLIF(start_date, ''), DATE(created_at)) as spent_on, CAST(spent_hours AS REAL) as hours
-                    FROM task_history h
-                    WHERE (user_id = CAST(? AS TEXT) OR user_id = CAST(? AS TEXT))
-                    ${localDateCond}
-                )
-                GROUP BY spent_on
-            `;
-            const paramsDaily = [
-                String(r.assignee_id), (r.name || '').trim(), ...opParams,
-                String(r.assignee_id), (r.name || '').trim(), ...localParams
-            ];
-            db.all(queryDaily, paramsDaily, (err, dRows) => {
-                resolve(dRows || []);
-            });
-        });
-
-        let workH = 0;
-        let otH = 0;
-        for (const dr of dailyTotals) {
-            const dh = parseFloat(dr.day_hours || 0);
-            if (dh > 0) {
-                workH += Math.min(8.0, dh);
-                otH += Math.max(0.0, dh - 8.0);
-            }
+        if (workH === 0 && otH === 0 && rawTotal > 0) {
+            workH = rawTotal;
+            otH = 0;
         }
 
+        r.total_hours = Math.round(rawTotal * 10) / 10;
         r.work_hours = Math.round(workH * 10) / 10;
         r.ot_hours = Math.round(otH * 10) / 10;
-        r.total_hours = Math.round((r.work_hours + r.ot_hours) * 10) / 10;
 
         r.missing_info = await calculateUserMissingWorkdays(r.assignee_id, r.name, activeStartDate, activeEndDate);
     }
