@@ -633,3 +633,42 @@ input[type="date"] {
     filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.8));
     animation: float-crown 2s ease-in-out infinite;
 }
+
+/* Date Preset Shortcut Chips */
+.preset-chip-btn {
+    background: rgba(255, 255, 255, 0.05);
+    color: #ccc;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    padding: 6px 14px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.preset-chip-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: translateY(-1px);
+}
+
+.preset-chip-btn.active {
+    background: var(--primary-color, #4CAF50) !important;
+    color: #000 !important;
+    font-weight: 600 !important;
+    border-color: var(--primary-color, #4CAF50) !important;
+    box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+}
+
+.preset-chip-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
