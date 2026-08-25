@@ -1370,6 +1370,21 @@ db.serialize(() => {
         status TEXT,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    // Cached OpenProject Time Entries directly from OpenProject API /api/v3/time_entries
+    db.run(`CREATE TABLE IF NOT EXISTS openproject_time_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        openproject_id TEXT UNIQUE,
+        user_id TEXT,
+        user_name TEXT,
+        work_package_id TEXT,
+        work_package_title TEXT,
+        project_name TEXT,
+        spent_on TEXT,
+        hours REAL DEFAULT 0,
+        comment TEXT,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
 });
 
 app.get('/api/wfh/defaults', (req, res) => {
@@ -2270,38 +2285,158 @@ function getRankingSettings() {
     });
 }
 
-// GET User Stats for Dashboard (Ranked by logged hours within active date range)
+// Helper: Parse ISO 8601 duration (e.g. "PT2H30M", "PT2.5H", "PT45M") or numeric float into decimal hours
+function parseIsoDuration(durationStr) {
+    if (!durationStr) return 0;
+    if (typeof durationStr === 'number') return durationStr;
+    const str = String(durationStr).trim();
+    if (!isNaN(Number(str))) return Number(str);
+
+    let totalHours = 0;
+    const daysMatch = /P(?:(\d+)D)?/.exec(str);
+    if (daysMatch && daysMatch[1]) {
+        totalHours += Number(daysMatch[1]) * 8; // 8 working hours per day
+    }
+
+    const timePartMatch = /T(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?/.exec(str);
+    if (timePartMatch) {
+        if (timePartMatch[1]) totalHours += Number(timePartMatch[1]);
+        if (timePartMatch[2]) totalHours += Number(timePartMatch[2]) / 60;
+        if (timePartMatch[3]) totalHours += Number(timePartMatch[3]) / 3600;
+    }
+
+    return Math.round(totalHours * 100) / 100;
+}
+
+// Sync Time Entries directly from OpenProject API /api/v3/time_entries
+async function syncOpenProjectTimeEntries(apiKey) {
+    const url = `${HOST}/api/v3/time_entries?pageSize=500`;
+    console.log('[TimeEntries] Syncing real time entries from OpenProject API...');
+    const result = await puppeteerFetch(url, { method: 'GET' }, apiKey);
+
+    if (result.status !== 200 || !result.data || !result.data._embedded) {
+        throw new Error((result.data && result.data.message) || result.error || `OpenProject API returned status ${result.status}`);
+    }
+
+    const elements = result.data._embedded.elements || [];
+    let syncedCount = 0;
+
+    const stmt = db.prepare(`
+        INSERT INTO openproject_time_entries (openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(openproject_id) DO UPDATE SET
+            user_id=excluded.user_id,
+            user_name=excluded.user_name,
+            work_package_id=excluded.work_package_id,
+            work_package_title=excluded.work_package_title,
+            project_name=excluded.project_name,
+            spent_on=excluded.spent_on,
+            hours=excluded.hours,
+            comment=excluded.comment,
+            updated_at=CURRENT_TIMESTAMP
+    `);
+
+    db.serialize(() => {
+        elements.forEach(elem => {
+            const openproject_id = String(elem.id);
+            const spent_on = (elem.spentOn || '').slice(0, 10);
+            const hours = parseIsoDuration(elem.hours);
+            const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
+            const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
+            const user_name = elem._links && elem._links.user ? (elem._links.user.title || '') : '';
+            const work_package_id = elem._links && elem._links.workPackage ? elem._links.workPackage.href.split('/').pop() : '';
+            const work_package_title = elem._links && elem._links.workPackage ? (elem._links.workPackage.title || '') : '';
+            const project_name = elem._links && elem._links.project ? (elem._links.project.title || '') : '';
+
+            stmt.run([openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment]);
+            syncedCount++;
+        });
+        stmt.finalize();
+    });
+
+    return {
+        ok: true,
+        count: syncedCount,
+        totalInOpenProject: result.data.total || elements.length
+    };
+}
+
+// POST Sync Time Entries from OpenProject API
+app.post('/api/openproject/time-entries/sync', async (req, res) => {
+    const userApiKey = req.cookies.user_apikey;
+    if (!userApiKey) {
+        return res.status(401).json({ error: "Missing OpenProject API Key. Please log in first." });
+    }
+
+    try {
+        const syncResult = await syncOpenProjectTimeEntries(userApiKey);
+        res.json(syncResult);
+    } catch (e) {
+        console.error('Time entries sync error:', e);
+        res.status(500).json({ error: e.message || 'Sync failed' });
+    }
+});
+
+// GET User Stats for Dashboard (Ranked by logged hours from OpenProject API time entries within active date range)
 app.get('/api/users-stats', async (req, res) => {
     try {
         const settings = await getRankingSettings();
         const { activeStartDate, activeEndDate } = settings;
 
-        let dateCondition = '';
-        const params = [];
+        let localDateCond = '';
+        let opDateCond = '';
+        const localParams = [];
+        const opParams = [];
 
         if (activeStartDate && activeEndDate) {
-            dateCondition = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) BETWEEN DATE(?) AND DATE(?)';
-            params.push(activeStartDate, activeEndDate);
+            localDateCond = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) BETWEEN DATE(?) AND DATE(?)';
+            opDateCond = 'AND DATE(t.spent_on) BETWEEN DATE(?) AND DATE(?)';
+            localParams.push(activeStartDate, activeEndDate);
+            opParams.push(activeStartDate, activeEndDate);
         } else if (activeStartDate) {
-            dateCondition = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) >= DATE(?)';
-            params.push(activeStartDate);
+            localDateCond = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) >= DATE(?)';
+            opDateCond = 'AND DATE(t.spent_on) >= DATE(?)';
+            localParams.push(activeStartDate);
+            opParams.push(activeStartDate);
         } else if (activeEndDate) {
-            dateCondition = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) <= DATE(?)';
-            params.push(activeEndDate);
+            localDateCond = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) <= DATE(?)';
+            opDateCond = 'AND DATE(t.spent_on) <= DATE(?)';
+            localParams.push(activeEndDate);
+            opParams.push(activeEndDate);
         }
 
         const query = `
             SELECT 
                 a.id as assignee_id,
                 COALESCE(u.name, a.name) as name, 
-                COALESCE(SUM(CAST(h.spent_hours AS REAL)), 0) as total_hours,
-                COUNT(h.id) as task_count
+                COALESCE(t.total_op_hours, h.total_local_hours, 0) as total_hours,
+                COALESCE(t.op_task_count, h.local_task_count, 0) as task_count,
+                CASE WHEN t.total_op_hours IS NOT NULL THEN 'openproject_api' ELSE 'local_history' END as data_source
             FROM local_assignees a 
             LEFT JOIN users u ON u.openproject_id = a.id
-            LEFT JOIN task_history h ON (h.user_id = CAST(a.id AS TEXT) OR h.user_id = u.id) ${dateCondition}
+            LEFT JOIN (
+                SELECT 
+                    user_id,
+                    SUM(hours) as total_op_hours,
+                    COUNT(DISTINCT work_package_id) as op_task_count
+                FROM openproject_time_entries t
+                WHERE 1=1 ${opDateCond}
+                GROUP BY user_id
+            ) t ON (t.user_id = CAST(a.id AS TEXT) OR t.user_id = u.openproject_id OR t.user_id = u.id)
+            LEFT JOIN (
+                SELECT 
+                    user_id,
+                    SUM(CAST(spent_hours AS REAL)) as total_local_hours,
+                    COUNT(id) as local_task_count
+                FROM task_history h
+                WHERE 1=1 ${localDateCond}
+                GROUP BY user_id
+            ) h ON (h.user_id = CAST(a.id AS TEXT) OR h.user_id = u.id)
             GROUP BY a.id, a.name, u.name
             ORDER BY total_hours DESC, task_count DESC, COALESCE(u.name, a.name) ASC
         `;
+
+        const params = [...opParams, ...localParams];
 
         db.all(query, params, (err, rows) => {
             if (err) return res.status(500).json({ error: err.message });
