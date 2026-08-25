@@ -675,8 +675,9 @@ input[type="date"] {
 
 /* Missing Days Badge */
 .missing-days-badge {
-    display: inline-block;
-    margin-left: 6px;
+    display: inline-flex;
+    align-items: center;
+    margin-left: 0;
     font-size: 0.75rem;
     color: #ff5252;
     background: rgba(255, 82, 82, 0.12);
@@ -684,9 +685,9 @@ input[type="date"] {
     padding: 1px 7px;
     border-radius: 10px;
     font-weight: 500;
-    vertical-align: middle;
     cursor: pointer;
     transition: all 0.2s ease;
+    white-space: nowrap;
 }
 
 .missing-days-badge:hover {

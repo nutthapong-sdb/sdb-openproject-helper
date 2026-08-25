@@ -348,7 +348,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 else if (rank === 2) iconHtml = '<div class="rank-crown crown-silver"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></div>';
                 else if (rank === 3) iconHtml = '<div class="rank-crown crown-bronze"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></div>';
 
-                let nameStyle = 'font-weight: 500; font-size: 0.95rem; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 150px; display: inline-block; vertical-align: middle;';
+                let nameStyle = 'font-weight: 500; font-size: 0.95rem; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; display: inline-block; vertical-align: middle; width: 100%;';
                 if (rank === 1) nameStyle += ' color: #ffe082; font-weight: bold;';
                 else if (rank === 2) nameStyle += ' color: #e0e0e0; font-weight: bold;';
                 else if (rank === 3) nameStyle += ' color: #ffcc80; font-weight: bold;';
@@ -365,15 +365,21 @@ document.addEventListener('DOMContentLoaded', async () => {
                 tr.style.cursor = 'pointer';
                 tr.innerHTML = `
                     <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; font-size: 1rem; color: ${rank <= 3 ? 'var(--primary-color)' : '#aaa'};">${rank}</td>
-                    <td style="padding: 10px; border-bottom: 1px solid #333; display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">
-                        <div class="rank-avatar-container">
-                             ${iconHtml}
-                             <div class="rank-frame">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${rank <= 5 ? '#fff' : '#aaa'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                             </div>
+                    <td style="padding: 10px; border-bottom: 1px solid #333;">
+                        <div style="display: flex; align-items: center; width: 100%;">
+                            <div class="rank-avatar-container" style="flex-shrink: 0;">
+                                 ${iconHtml}
+                                 <div class="rank-frame">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${rank <= 5 ? '#fff' : '#aaa'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                                 </div>
+                            </div>
+                            <div style="width: 200px; min-width: 200px; max-width: 200px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; margin-right: 10px; flex-shrink: 0;">
+                                <span style="${nameStyle}" title="${u.name}">${u.name || 'Unknown'}</span>
+                            </div>
+                            <div style="flex: 1; display: flex; align-items: center; min-width: 0;">
+                                ${missingBadgeHtml}
+                            </div>
                         </div>
-                        <span style="${nameStyle}" title="${u.name}">${u.name || 'Unknown'}</span>
-                        ${missingBadgeHtml}
                     </td>
                     <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; color: var(--primary-color); font-size: ${rank <= 3 ? '1.1rem' : '0.9rem'};">${displayHours} ชม.</td>
                 `;
