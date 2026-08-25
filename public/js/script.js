@@ -1187,8 +1187,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         $('.preset-chip-btn').removeClass('active');
         
         if (currentRankingMode === 'all') {
-            $('#rankingAllTimeBtn').addClass('active').html('✓ ทุกช่วงเวลา');
-            $('#rankingToPresentBtn').html('จนถึงปัจจุบัน');
+            $('#rankingAllTimeBtn').addClass('active').html('✓ ทั้งหมด');
+            $('#rankingToPresentBtn').html('ปัจจุบัน');
             $('#rankingStartDateInput').val('').prop('disabled', true);
             $('#rankingEndDateInput').val('').prop('disabled', true);
             const noticeText = isAdmin 
@@ -1196,8 +1196,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 : 'โหมด: แสดงทุกช่วงเวลา (เฉพาะ Role Admin ขึ้นไปเท่านั้นที่สามารถเปลี่ยนได้)';
             $('#rankingDateNotice').text(noticeText);
         } else if (currentRankingMode === 'to_present') {
-            $('#rankingAllTimeBtn').html('ทุกช่วงเวลา');
-            $('#rankingToPresentBtn').addClass('active').html('✓ จนถึงปัจจุบัน');
+            $('#rankingAllTimeBtn').html('ทั้งหมด');
+            $('#rankingToPresentBtn').addClass('active').html('✓ ปัจจุบัน');
             const today = new Date().toISOString().split('T')[0];
             $('#rankingStartDateInput').prop('disabled', !isAdmin);
             $('#rankingEndDateInput').val(today).prop('disabled', true);
@@ -1206,8 +1206,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 : 'โหมด: คำนวณตั้งแต่วันที่เริ่มต้น จนถึงวันปัจจุบัน (เฉพาะ Role Admin ขึ้นไปเท่านั้นที่สามารถเปลี่ยนได้)';
             $('#rankingDateNotice').text(noticeText);
         } else {
-            $('#rankingAllTimeBtn').html('ทุกช่วงเวลา');
-            $('#rankingToPresentBtn').html('จนถึงปัจจุบัน');
+            $('#rankingAllTimeBtn').html('ทั้งหมด');
+            $('#rankingToPresentBtn').html('ปัจจุบัน');
             $('#rankingStartDateInput').prop('disabled', !isAdmin);
             $('#rankingEndDateInput').prop('disabled', !isAdmin);
             const noticeText = isAdmin 

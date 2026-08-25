@@ -639,10 +639,10 @@ input[type="date"] {
     background: rgba(255, 255, 255, 0.05);
     color: #ccc;
     border: 1px solid rgba(255, 255, 255, 0.15);
-    padding: 6px 14px;
-    border-radius: 20px;
+    padding: 4px 10px;
+    border-radius: 14px;
     cursor: pointer;
-    font-size: 0.82rem;
+    font-size: 0.78rem;
     font-weight: 500;
     transition: all 0.2s ease;
     white-space: nowrap;
