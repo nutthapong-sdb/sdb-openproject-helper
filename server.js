@@ -2983,6 +2983,40 @@ app.get('/api/weekly-stats', async (req, res) => {
 
         const entries = result.data._embedded ? result.data._embedded.elements : [];
 
+        // Save these live weekly entries into SQLite openproject_time_entries table
+        if (entries && entries.length > 0) {
+            const user = await getUserFromSessionOrKey(req);
+            const meName = (user && (user.name || user.username)) || 'User';
+
+            db.serialize(() => {
+                const stmt = db.prepare(`
+                    INSERT INTO openproject_time_entries (openproject_id, user_id, user_name, work_package_id, comment, project_name, spent_on, hours, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(openproject_id) DO UPDATE SET
+                        hours = excluded.hours,
+                        spent_on = excluded.spent_on,
+                        comment = excluded.comment,
+                        updated_at = CURRENT_TIMESTAMP
+                `);
+
+                entries.forEach(e => {
+                    const opId = String(e.id);
+                    const wpId = e._links && e._links.workPackage ? e._links.workPackage.href.split('/').pop() : null;
+                    const hoursVal = parseIsoDuration(e.hours);
+                    const comment = e.comment ? (e.comment.raw || '') : '';
+                    stmt.run([opId, String(userId), meName, wpId, comment, '', e.spentOn, hoursVal]);
+                });
+
+                stmt.finalize(async () => {
+                    try {
+                        await recalculateAndCacheRanking();
+                    } catch (calcErr) {
+                        console.warn('[WeeklyStats] Recalculation notice:', calcErr.message);
+                    }
+                });
+            });
+        }
+
         // Aggregate
         const stats = dates.map(date => {
             // entries.hours is usually an ISO duration (e.g., PT5H) or simple value depending on API version
