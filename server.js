@@ -2656,6 +2656,15 @@ async function calculateUserMissingWorkdays(assigneeId, userName, startDateStr, 
 // Helper: Calculate ranking scores from SQLite tables and update ranking_cache table
 async function recalculateAndCacheRanking() {
     console.log('[RankingCache] Recalculating and caching ranking metrics in database...');
+
+    // Clean orphaned task_history records whose openproject_id no longer exists in openproject_time_entries
+    db.run(`
+        DELETE FROM task_history 
+        WHERE openproject_id IS NOT NULL 
+          AND openproject_id != ''
+          AND openproject_id NOT IN (SELECT DISTINCT work_package_id FROM openproject_time_entries WHERE work_package_id IS NOT NULL)
+    `);
+
     const settings = await getRankingSettings();
     const { activeStartDate, activeEndDate } = settings;
 
