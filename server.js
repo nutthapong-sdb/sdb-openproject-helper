@@ -2409,6 +2409,7 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
 
     let totalSynced = 0;
     let maxTotalInOp = 0;
+    const activeOpIds = new Set();
 
     const stmt = db.prepare(`
         INSERT INTO openproject_time_entries (openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment, updated_at)
@@ -2452,6 +2453,7 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
             db.serialize(() => {
                 elements.forEach(elem => {
                     const openproject_id = String(elem.id);
+                    activeOpIds.add(openproject_id);
                     const spent_on = (elem.spentOn || '').slice(0, 10);
                     const hours = parseIsoDuration(elem.hours);
                     const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
@@ -2474,6 +2476,21 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
     }
 
     stmt.finalize();
+
+    // Prune entries in SQLite openproject_time_entries that were deleted from OpenProject Server
+    if (activeOpIds.size > 0) {
+        const idList = Array.from(activeOpIds);
+        const chunkSize = 500;
+        for (let i = 0; i < idList.length; i += chunkSize) {
+            const chunk = idList.slice(i, i + chunkSize);
+            const placeholders = chunk.map(() => '?').join(',');
+            db.run(`
+                DELETE FROM openproject_time_entries 
+                WHERE openproject_id NOT IN (${placeholders}) 
+                  AND strftime('%Y', spent_on) >= '2025'
+            `, chunk);
+        }
+    }
 
     return {
         ok: true,
@@ -3063,10 +3080,11 @@ app.get('/api/weekly-stats', async (req, res) => {
 
         const entries = result.data._embedded ? result.data._embedded.elements : [];
 
-        // Save these live weekly entries into SQLite openproject_time_entries table
-        if (entries && entries.length > 0) {
+        // Save these live weekly entries into SQLite openproject_time_entries table & prune deleted ones
+        if (entries) {
             const user = await getUserFromSessionOrKey(req);
             const meName = (user && (user.name || user.username)) || 'User';
+            const liveWeeklyOpIds = entries.map(e => String(e.id));
 
             db.serialize(() => {
                 const stmt = db.prepare(`
@@ -3088,6 +3106,23 @@ app.get('/api/weekly-stats', async (req, res) => {
                 });
 
                 stmt.finalize(async () => {
+                    // Prune entries deleted from OpenProject Server for this user within date range
+                    if (liveWeeklyOpIds.length > 0) {
+                        const placeholders = liveWeeklyOpIds.map(() => '?').join(',');
+                        db.run(`
+                            DELETE FROM openproject_time_entries 
+                            WHERE (user_id = ? OR LOWER(TRIM(user_name)) = LOWER(TRIM(?)))
+                              AND DATE(spent_on) BETWEEN DATE(?) AND DATE(?)
+                              AND openproject_id NOT IN (${placeholders})
+                        `, [String(userId), meName, startDate, endDate]);
+                    } else {
+                        db.run(`
+                            DELETE FROM openproject_time_entries 
+                            WHERE (user_id = ? OR LOWER(TRIM(user_name)) = LOWER(TRIM(?)))
+                              AND DATE(spent_on) BETWEEN DATE(?) AND DATE(?)
+                        `, [String(userId), meName, startDate, endDate]);
+                    }
+
                     try {
                         await recalculateAndCacheRanking();
                     } catch (calcErr) {
