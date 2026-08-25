@@ -1511,6 +1511,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 Swal.fire('Error', e.message, 'error');
             }
         }
+    };
+
     // Expose fillTaskFormFromMissing to global scope
     window.fillTaskFormFromMissing = (dateStr, remainingHours) => {
         const startDateInput = document.getElementById('startDate');
