@@ -1713,26 +1713,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (dueDateInput) dueDateInput.value = dateStr;
         if (spentHoursInput) spentHoursInput.value = remainingHours;
 
-        // Scroll smoothly to form card
-        const formCard = document.querySelector('.panel-task') || taskNameInput;
-        if (formCard) {
-            formCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
+        // Scroll to top of page
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+
         if (taskNameInput) {
-            setTimeout(() => taskNameInput.focus(), 350);
+            setTimeout(() => taskNameInput.focus(), 300);
         }
 
         const dateFmt = formatDateDisplay(dateStr);
-        if (typeof showToast === 'function') {
-            showToast(`วางข้อมูลวันที่ ${dateFmt} (${remainingHours} ชม.) ลงในฟอร์มแล้ว`, 'success');
-        } else if (typeof Swal !== 'undefined') {
+
+        // Small top-right toast alert
+        if (typeof Swal !== 'undefined') {
             Swal.fire({
+                toast: true,
+                position: 'top-end',
                 icon: 'success',
-                title: 'วางข้อมูลเรียบร้อย',
-                text: `ใส่วันที่ ${dateFmt} และจำนวนชั่วโมง ${remainingHours} ชม. ลงในฟอร์มแล้ว`,
-                timer: 1800,
-                showConfirmButton: false
+                title: `ใส่วันที่ ${dateFmt} (${remainingHours} ชม.) เรียบร้อยแล้ว`,
+                showConfirmButton: false,
+                timer: 2000,
+                timerProgressBar: true
             });
+        } else if (typeof showToast === 'function') {
+            showToast(`ใส่วันที่ ${dateFmt} (${remainingHours} ชม.) เรียบร้อยแล้ว`, 'success');
         }
     };
 
