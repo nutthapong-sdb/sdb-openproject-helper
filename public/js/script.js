@@ -372,6 +372,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 tbody.appendChild(tr);
             });
 
+            const syncBtn = document.getElementById('syncTimeEntriesBtn');
+            if (syncBtn) {
+                if (data && data.canSyncToday === false && !data.isAdmin) {
+                    syncBtn.title = "คุณใช้สิทธิ์ Sync ของวันนี้ไปแล้ว (กดได้อีกครั้งในวันพรุ่งนี้)";
+                } else {
+                    syncBtn.title = "ดึงข้อมูลชั่วโมงทำงานจริงจาก OpenProject API";
+                }
+            }
+
         } catch (error) {
             console.error('[loadUserStats]', error);
             tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; padding: 20px; color: #c62828;">Error loading stats: ${error.message}</td></tr>`;
@@ -396,13 +405,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     await loadUserStats();
                 } else {
                     const msg = (data && data.error) || 'Failed to sync time entries';
-                    if (typeof showToast === 'function') showToast(msg, 'error');
-                    else if (typeof Swal !== 'undefined') Swal.fire('Sync Failed', msg, 'error');
+                    if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, 'warning');
+                    else if (typeof showToast === 'function') showToast(msg, 'error');
                 }
             } catch (e) {
                 const msg = e.message || 'Error syncing time entries';
-                if (typeof showToast === 'function') showToast(msg, 'error');
-                else if (typeof Swal !== 'undefined') Swal.fire('Error', msg, 'error');
+                if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, 'warning');
+                else if (typeof showToast === 'function') showToast(msg, 'error');
             } finally {
                 if (icon) icon.textContent = '🔄';
                 syncTimeBtn.disabled = false;

@@ -1388,6 +1388,24 @@ db.serialize(() => {
         comment TEXT,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    // Cached Ranking Results
+    db.run(`CREATE TABLE IF NOT EXISTS ranking_cache (
+        assignee_id TEXT PRIMARY KEY,
+        name TEXT,
+        total_hours REAL DEFAULT 0,
+        task_count INTEGER DEFAULT 0,
+        data_source TEXT,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    // User Daily Sync Logs (Rate Limit: 1 per day for non-admin users)
+    db.run(`CREATE TABLE IF NOT EXISTS user_sync_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        sync_date TEXT NOT NULL,
+        synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
 });
 
 app.get('/api/wfh/defaults', (req, res) => {
@@ -2142,13 +2160,6 @@ app.post('/api/work_packages', async (req, res) => {
             }
             // ---------------------
 
-            // Auto-sync real time entries from OpenProject API whenever a task is created or time is logged
-            if (userApiKey) {
-                syncOpenProjectTimeEntries(userApiKey).catch(syncErr => {
-                    console.warn('[CreateTask] Background auto-sync notice:', syncErr.message);
-                });
-            }
-
             res.json({
                 ...result.data,
                 webUrl,
@@ -2412,121 +2423,223 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
     };
 }
 
-// POST Sync Time Entries from OpenProject API
+// Helper: Resolve user details from session or API key cookie
+async function getUserFromSessionOrKey(req) {
+    const sdbSession = req.cookies.sdb_session;
+    const userApiKey = req.cookies.user_apikey;
+
+    return new Promise(resolve => {
+        if (userApiKey) {
+            db.get("SELECT * FROM users WHERE api_key = ?", [userApiKey], (err, row) => {
+                if (row) return resolve(row);
+                if (sdbSession) {
+                    db.get("SELECT * FROM users WHERE username = ? OR id = ? OR openproject_id = ?", [sdbSession, sdbSession, sdbSession], (err2, row2) => {
+                        resolve(row2 || null);
+                    });
+                } else {
+                    resolve(null);
+                }
+            });
+        } else if (sdbSession) {
+            db.get("SELECT * FROM users WHERE username = ? OR id = ? OR openproject_id = ?", [sdbSession, sdbSession, sdbSession], (err, row) => {
+                resolve(row || null);
+            });
+        } else {
+            resolve(null);
+        }
+    });
+}
+
+// Helper: Calculate ranking scores from SQLite tables and update ranking_cache table
+async function recalculateAndCacheRanking() {
+    console.log('[RankingCache] Recalculating and caching ranking metrics in database...');
+    const settings = await getRankingSettings();
+    const { activeStartDate, activeEndDate } = settings;
+
+    let localDateCond = '';
+    let opDateCond = '';
+    const localParams = [];
+    const opParams = [];
+
+    if (activeStartDate && activeEndDate) {
+        localDateCond = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) BETWEEN DATE(?) AND DATE(?)';
+        opDateCond = 'AND DATE(t.spent_on) BETWEEN DATE(?) AND DATE(?)';
+        localParams.push(activeStartDate, activeEndDate);
+        opParams.push(activeStartDate, activeEndDate);
+    } else if (activeStartDate) {
+        localDateCond = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) >= DATE(?)';
+        opDateCond = 'AND DATE(t.spent_on) >= DATE(?)';
+        localParams.push(activeStartDate);
+        opParams.push(activeStartDate);
+    } else if (activeEndDate) {
+        localDateCond = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) <= DATE(?)';
+        opDateCond = 'AND DATE(t.spent_on) <= DATE(?)';
+        localParams.push(activeEndDate);
+        opParams.push(activeEndDate);
+    }
+
+    const query = `
+        SELECT 
+            a.id as assignee_id,
+            COALESCE(u.name, a.name) as name, 
+            COALESCE(t.total_op_hours, h.total_local_hours, 0) as total_hours,
+            COALESCE(t.op_task_count, h.local_task_count, 0) as task_count,
+            CASE WHEN t.total_op_hours IS NOT NULL THEN 'openproject_api' ELSE 'local_history' END as data_source
+        FROM local_assignees a 
+        LEFT JOIN users u ON (u.openproject_id = CAST(a.id AS TEXT) OR u.id = CAST(a.id AS TEXT))
+        LEFT JOIN (
+            SELECT 
+                user_id,
+                user_name,
+                SUM(hours) as total_op_hours,
+                COUNT(DISTINCT work_package_id) as op_task_count
+            FROM openproject_time_entries t
+            WHERE 1=1 ${opDateCond}
+            GROUP BY user_id, user_name
+        ) t ON (
+            t.user_id = CAST(a.id AS TEXT) 
+            OR t.user_id = u.openproject_id 
+            OR t.user_id = u.id 
+            OR (t.user_name IS NOT NULL AND LOWER(TRIM(t.user_name)) = LOWER(TRIM(a.name)))
+            OR (t.user_name IS NOT NULL AND LOWER(TRIM(t.user_name)) = LOWER(TRIM(u.name)))
+        )
+        LEFT JOIN (
+            SELECT 
+                user_id,
+                SUM(CAST(spent_hours AS REAL)) as total_local_hours,
+                COUNT(id) as local_task_count
+            FROM task_history h
+            WHERE 1=1 ${localDateCond}
+            GROUP BY user_id
+        ) h ON (h.user_id = CAST(a.id AS TEXT) OR h.user_id = u.id)
+        GROUP BY a.id, a.name, u.name
+        ORDER BY total_hours DESC, task_count DESC, COALESCE(u.name, a.name) ASC
+    `;
+
+    const params = [...opParams, ...localParams];
+
+    const rows = await new Promise((resolve, reject) => {
+        db.all(query, params, (err, r) => err ? reject(err) : resolve(r || []));
+    });
+
+    await new Promise((resolve, reject) => {
+        db.serialize(() => {
+            db.run("DELETE FROM ranking_cache");
+            const stmt = db.prepare(`
+                INSERT INTO ranking_cache (assignee_id, name, total_hours, task_count, data_source, updated_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            `);
+            rows.forEach(r => {
+                stmt.run([r.assignee_id, r.name, r.total_hours, r.task_count, r.data_source]);
+            });
+            stmt.finalize((err) => err ? reject(err) : resolve());
+        });
+    });
+
+    return rows;
+}
+
+// POST Sync Time Entries from OpenProject API (Rate Limit: 1 sync per day per non-admin user)
 app.post('/api/openproject/time-entries/sync', async (req, res) => {
     const userApiKey = req.cookies.user_apikey;
     if (!userApiKey) {
         return res.status(401).json({ error: "Missing OpenProject API Key. Please log in first." });
     }
 
+    const user = await getUserFromSessionOrKey(req);
+    const userId = user ? String(user.id) : (req.cookies.sdb_session || 'unknown');
+    const isAdmin = user && (user.role === 'admin' || user.role === 'root');
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // Standard user rate limit: 1 sync per day
+    if (!isAdmin && user) {
+        const syncCount = await new Promise(resolve => {
+            db.get("SELECT COUNT(*) as cnt FROM user_sync_logs WHERE user_id = ? AND sync_date = ?", [userId, todayStr], (err, r) => {
+                resolve(r ? r.cnt : 0);
+            });
+        });
+
+        if (syncCount >= 1) {
+            return res.status(429).json({
+                error: "คุณสามารถ Sync ข้อมูลได้วันละ 1 ครั้งเท่านั้น (กดได้อีกครั้งในวันพรุ่งนี้)",
+                rateLimited: true,
+                canSyncToday: false
+            });
+        }
+    }
+
     try {
         const syncResult = await syncOpenProjectTimeEntries(userApiKey);
-        res.json(syncResult);
+        
+        // Recalculate and update ranking cache in DB
+        await recalculateAndCacheRanking();
+
+        // Record user sync execution
+        db.run("INSERT INTO user_sync_logs (user_id, sync_date) VALUES (?, ?)", [userId, todayStr]);
+
+        const lastSyncRow = await new Promise(resolve => {
+            db.get("SELECT MAX(updated_at) as last_updated FROM ranking_cache", [], (err, row) => resolve(row));
+        });
+
+        res.json({ 
+            ...syncResult, 
+            lastSync: lastSyncRow ? lastSyncRow.last_updated : null,
+            canSyncToday: isAdmin // Admins can sync unlimited, non-admins have used their daily quota
+        });
     } catch (e) {
         console.error('Time entries sync error:', e);
         res.status(500).json({ error: e.message || 'Sync failed' });
     }
 });
 
-// GET User Stats for Dashboard (Ranked by logged hours from OpenProject API time entries within active date range)
+// GET User Stats for Dashboard (Strictly loaded from ranking_cache table without auto-sync)
 app.get('/api/users-stats', async (req, res) => {
     try {
-        const userApiKey = req.cookies.user_apikey;
+        const settings = await getRankingSettings();
 
-        // Auto-sync if user has API key and cache is empty or stale (>5 mins)
-        if (userApiKey) {
-            const cacheStatus = await new Promise(resolve => {
-                db.get("SELECT MAX(updated_at) as last_updated, COUNT(*) as cnt FROM openproject_time_entries", [], (err, row) => {
-                    resolve(row || { last_updated: null, cnt: 0 });
-                });
+        // Query directly from ranking_cache table
+        let rows = await new Promise(resolve => {
+            db.all("SELECT assignee_id, name, total_hours, task_count, data_source, updated_at FROM ranking_cache ORDER BY total_hours DESC, task_count DESC, name ASC", [], (err, r) => {
+                resolve(r || []);
             });
+        });
 
-            const isStale = !cacheStatus.last_updated || (Date.now() - new Date(cacheStatus.last_updated).getTime() > 5 * 60 * 1000);
-            if (cacheStatus.cnt === 0 || isStale || req.query.sync === '1') {
-                try {
-                    await syncOpenProjectTimeEntries(userApiKey);
-                } catch (syncErr) {
-                    console.warn('[UsersStats] Auto-sync notice:', syncErr.message);
-                }
+        // If ranking cache is completely empty, populate it once
+        if (rows.length === 0) {
+            try {
+                rows = await recalculateAndCacheRanking();
+            } catch (err) {
+                console.warn('[UsersStats] Initial ranking cache build notice:', err.message);
             }
         }
 
-        const settings = await getRankingSettings();
-        const { activeStartDate, activeEndDate } = settings;
+        const lastSyncRow = await new Promise(resolve => {
+            db.get("SELECT MAX(updated_at) as last_updated FROM ranking_cache", [], (err, row) => resolve(row));
+        });
+        const lastSync = (lastSyncRow && lastSyncRow.last_updated) ? lastSyncRow.last_updated : null;
 
-        let localDateCond = '';
-        let opDateCond = '';
-        const localParams = [];
-        const opParams = [];
+        // Check user sync quota for today
+        const user = await getUserFromSessionOrKey(req);
+        const userId = user ? String(user.id) : (req.cookies.sdb_session || 'unknown');
+        const isAdmin = user && (user.role === 'admin' || user.role === 'root');
+        const todayStr = new Date().toISOString().split('T')[0];
 
-        if (activeStartDate && activeEndDate) {
-            localDateCond = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) BETWEEN DATE(?) AND DATE(?)';
-            opDateCond = 'AND DATE(t.spent_on) BETWEEN DATE(?) AND DATE(?)';
-            localParams.push(activeStartDate, activeEndDate);
-            opParams.push(activeStartDate, activeEndDate);
-        } else if (activeStartDate) {
-            localDateCond = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) >= DATE(?)';
-            opDateCond = 'AND DATE(t.spent_on) >= DATE(?)';
-            localParams.push(activeStartDate);
-            opParams.push(activeStartDate);
-        } else if (activeEndDate) {
-            localDateCond = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) <= DATE(?)';
-            opDateCond = 'AND DATE(t.spent_on) <= DATE(?)';
-            localParams.push(activeEndDate);
-            opParams.push(activeEndDate);
-        }
-
-        const query = `
-            SELECT 
-                a.id as assignee_id,
-                COALESCE(u.name, a.name) as name, 
-                COALESCE(t.total_op_hours, h.total_local_hours, 0) as total_hours,
-                COALESCE(t.op_task_count, h.local_task_count, 0) as task_count,
-                CASE WHEN t.total_op_hours IS NOT NULL THEN 'openproject_api' ELSE 'local_history' END as data_source
-            FROM local_assignees a 
-            LEFT JOIN users u ON (u.openproject_id = CAST(a.id AS TEXT) OR u.id = CAST(a.id AS TEXT))
-            LEFT JOIN (
-                SELECT 
-                    user_id,
-                    user_name,
-                    SUM(hours) as total_op_hours,
-                    COUNT(DISTINCT work_package_id) as op_task_count
-                FROM openproject_time_entries t
-                WHERE 1=1 ${opDateCond}
-                GROUP BY user_id, user_name
-            ) t ON (
-                t.user_id = CAST(a.id AS TEXT) 
-                OR t.user_id = u.openproject_id 
-                OR t.user_id = u.id 
-                OR (t.user_name IS NOT NULL AND LOWER(TRIM(t.user_name)) = LOWER(TRIM(a.name)))
-                OR (t.user_name IS NOT NULL AND LOWER(TRIM(t.user_name)) = LOWER(TRIM(u.name)))
-            )
-            LEFT JOIN (
-                SELECT 
-                    user_id,
-                    SUM(CAST(spent_hours AS REAL)) as total_local_hours,
-                    COUNT(id) as local_task_count
-                FROM task_history h
-                WHERE 1=1 ${localDateCond}
-                GROUP BY user_id
-            ) h ON (h.user_id = CAST(a.id AS TEXT) OR h.user_id = u.id)
-            GROUP BY a.id, a.name, u.name
-            ORDER BY total_hours DESC, task_count DESC, COALESCE(u.name, a.name) ASC
-        `;
-
-        const params = [...opParams, ...localParams];
-
-        db.all(query, params, (err, rows) => {
-            if (err) return res.status(500).json({ error: err.message });
-
-            db.get("SELECT MAX(updated_at) as last_updated FROM openproject_time_entries", [], (syncErr, syncRow) => {
-                const lastSync = (syncRow && syncRow.last_updated) ? syncRow.last_updated : null;
-                res.json({
-                    settings,
-                    users: rows || [],
-                    lastSync
+        let canSyncToday = true;
+        if (!isAdmin && user) {
+            const syncCount = await new Promise(resolve => {
+                db.get("SELECT COUNT(*) as cnt FROM user_sync_logs WHERE user_id = ? AND sync_date = ?", [userId, todayStr], (err, r) => {
+                    resolve(r ? r.cnt : 0);
                 });
             });
+            canSyncToday = syncCount < 1;
+        }
+
+        res.json({
+            settings,
+            users: rows || [],
+            lastSync,
+            canSyncToday,
+            isAdmin: !!isAdmin
         });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -2543,12 +2656,12 @@ app.get('/api/ranking/settings', async (req, res) => {
     }
 });
 
-// POST Admin Ranking Settings (Save global date range)
+// POST Admin Ranking Settings (Save global date range and update ranking cache)
 app.post('/api/admin/ranking/settings', (req, res) => {
     const localUserId = req.cookies.sdb_session;
     if (!localUserId) return res.status(401).json({ error: "Unauthorized" });
 
-    db.get('SELECT role FROM users WHERE id = ? OR openproject_id = ?', [localUserId, localUserId], (err, userRow) => {
+    db.get('SELECT role FROM users WHERE id = ? OR openproject_id = ?', [localUserId, localUserId], async (err, userRow) => {
         const role = userRow ? userRow.role : 'user';
         if (role !== 'admin' && role !== 'root') {
             return res.status(403).json({ error: 'Admin permission required (เฉพาะ role Admin ขึ้นไปเท่านั้นที่สามารถเปลี่ยนช่วงวันที่ได้)' });
@@ -2562,6 +2675,7 @@ app.post('/api/admin/ranking/settings', (req, res) => {
             db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('ranking_date_mode', ?)", [mode], async (err) => {
                 if (err) return res.status(500).json({ error: err.message });
                 const updated = await getRankingSettings();
+                await recalculateAndCacheRanking();
                 res.json({ ok: true, settings: updated });
             });
         });
