@@ -452,6 +452,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             const unloggedTitle = document.getElementById('unloggedCardTitle');
 
             const isAdminUser = currentUserRole === 'admin' || currentUserRole === 'root';
+            const tabExcludedBtnElem = document.getElementById('tabExcludedDatesBtn');
+            if (tabExcludedBtnElem) {
+                tabExcludedBtnElem.style.display = isAdminUser ? 'inline-block' : 'none';
+            }
 
             if (unloggedTitle) {
                 unloggedTitle.textContent = 'รายการที่ยังไม่ลงข้อมูล';

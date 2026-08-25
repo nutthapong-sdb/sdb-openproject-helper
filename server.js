@@ -2134,7 +2134,7 @@ app.post('/api/work_packages', async (req, res) => {
                 `INSERT INTO task_history (user_id, openproject_id, subject, project_name, start_date, due_date, spent_hours, web_url, created_at) 
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [sdbSession, newWorkPackageId, subject, projectName || 'Unknown', startDate || null, dueDate || null, spentHours || 0, webUrl, nowIso],
-                (err) => {
+                async (err) => {
                     if (err) {
                         console.error("Failed to log history", err);
                     } else {
@@ -2144,6 +2144,13 @@ app.post('/api/work_packages', async (req, res) => {
                             VALUES (?, 1) 
                             ON CONFLICT(user_id) DO UPDATE SET score = score + 1
                         `, [sdbSession]);
+
+                        // Instantly update local ranking cache and unlogged workdays list
+                        try {
+                            await recalculateAndCacheRanking();
+                        } catch (recErr) {
+                            console.warn('[TaskCreate] Local recalculation notice:', recErr.message);
+                        }
                     }
                 }
             );
