@@ -717,3 +717,37 @@ input[type="date"] {
     transform: translateY(-1px);
     box-shadow: 0 2px 6px rgba(76, 175, 80, 0.4);
 }
+
+/* Styled Year Dropdown */
+.styled-year-select {
+    background-color: var(--input-bg, #2C2C2C);
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23FF8F00'%3e%3cpath d='M7 10l5 5 5-5z'/%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    background-size: 1.1em;
+    color: var(--text-color, #EEEEEE);
+    border: 1px solid var(--border-color, #444);
+    border-radius: 8px;
+    padding: 4px 26px 4px 10px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    appearance: none;
+    -webkit-appearance: none;
+    outline: none;
+}
+
+.styled-year-select:hover,
+.styled-year-select:focus {
+    border-color: var(--primary-color, #FF8F00);
+    box-shadow: 0 0 0 2px rgba(255, 143, 0, 0.2);
+    background-color: #333333;
+}
+
+.styled-year-select option {
+    background-color: #222222;
+    color: #ffffff;
+    padding: 6px;
+    font-size: 0.85rem;
+}
