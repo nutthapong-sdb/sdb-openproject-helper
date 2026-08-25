@@ -2037,7 +2037,7 @@ app.post('/api/history', (req, res) => {
 });
 
 // DELETE from History (local DB only)
-app.delete('/api/history/:id', (req, res) => {
+app.delete('/api/history/:id', async (req, res) => {
     const userId = req.cookies.sdb_session;
     if (!userId) {
         return res.status(401).json({ error: 'Not authenticated' });
@@ -2046,15 +2046,24 @@ app.delete('/api/history/:id', (req, res) => {
     const { id } = req.params;
     console.log(`Deleting from local history: ID=${id}, UserID=${userId}`);
 
+    // Retrieve openproject_id before deletion
+    const item = await new Promise(resolve => {
+        db.get("SELECT openproject_id FROM task_history WHERE id = ? AND user_id = ?", [id, userId], (err, row) => resolve(row));
+    });
+
     db.run(
         "DELETE FROM task_history WHERE id = ? AND user_id = ?",
         [id, userId],
-        function (err) {
+        async function (err) {
             if (err) {
                 return res.status(500).json({ error: err.message });
             }
             if (this.changes === 0) {
                 return res.status(404).json({ error: 'History item not found' });
+            }
+
+            if (item && item.openproject_id) {
+                db.run("DELETE FROM openproject_time_entries WHERE work_package_id = ?", [String(item.openproject_id)]);
             }
 
             // Decrease ranking by 1, floor at 0
@@ -2063,6 +2072,12 @@ app.delete('/api/history/:id', (req, res) => {
                 SET score = MAX(0, score - 1) 
                 WHERE user_id = ?
             `, [userId]);
+
+            try {
+                await recalculateAndCacheRanking();
+            } catch (recErr) {
+                console.warn('[HistoryDelete] Recalculation notice:', recErr.message);
+            }
 
             res.json({ message: 'Deleted from history' });
         }
@@ -2236,6 +2251,16 @@ app.delete('/api/work_packages/:id', async (req, res) => {
         const result = await puppeteerFetch(url, {
             method: 'DELETE'
         }, userApiKey);
+
+        // Clean local SQLite task_history and openproject_time_entries for this deleted work package
+        db.run("DELETE FROM task_history WHERE openproject_id = ?", [String(id)]);
+        db.run("DELETE FROM openproject_time_entries WHERE work_package_id = ?", [String(id)]);
+
+        try {
+            await recalculateAndCacheRanking();
+        } catch (recErr) {
+            console.warn('[WorkPackageDelete] Recalculation notice:', recErr.message);
+        }
 
         if (result.status >= 200 && result.status < 300) {
             console.log(`Work Package #${id} deleted successfully.`);

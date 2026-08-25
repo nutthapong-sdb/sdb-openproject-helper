@@ -274,7 +274,12 @@
                 <div id="unloggedWorkdaysCard" class="panel right-panel" style="width: 100%; max-width: none; min-width: 0;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <h2 id="unloggedCardTitle" style="margin: 0; font-size: 1.05rem; color: #fff; font-weight: 600;">รายการที่ยังไม่ลงข้อมูล</h2>
-                        <span id="unloggedCountBadge" style="font-size: 0.78rem; background: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid rgba(255,82,82,0.3); padding: 2px 8px; border-radius: 10px; font-weight: 500;"></span>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <button type="button" id="refreshUnloggedBtn" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #ccc; border-radius: 6px; padding: 2px 8px; font-size: 0.75rem; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;" title="กดเพื่ออัปเดตรายการงานค้างล่าสุด">
+                                <span id="refreshUnloggedIcon">🔄</span> Refresh
+                            </button>
+                            <span id="unloggedCountBadge" style="font-size: 0.78rem; background: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid rgba(255,82,82,0.3); padding: 2px 8px; border-radius: 10px; font-weight: 500;"></span>
+                        </div>
                     </div>
 
                     <!-- Sub-navigation Tabs below header -->

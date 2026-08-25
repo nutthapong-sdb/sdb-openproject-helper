@@ -581,6 +581,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    const refreshUnloggedBtn = document.getElementById('refreshUnloggedBtn');
+    if (refreshUnloggedBtn) {
+        refreshUnloggedBtn.addEventListener('click', async () => {
+            const icon = document.getElementById('refreshUnloggedIcon');
+            refreshUnloggedBtn.disabled = true;
+            try {
+                await loadUserStats();
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'รีเฟรชสำเร็จ',
+                        text: 'อัปเดตรายการที่ยังไม่ลงข้อมูลล่าสุดเรียบร้อยแล้ว',
+                        timer: 1500,
+                        showConfirmButton: false,
+                        toast: true,
+                        position: 'top-end'
+                    });
+                }
+            } catch (e) {
+                console.error('[refreshUnloggedBtn]', e);
+            } finally {
+                refreshUnloggedBtn.disabled = false;
+            }
+        });
+    }
+
     const deleteFromHistory = async (historyId, openprojectId, subject) => {
         // Confirmation Dialog
         const result = await Swal.fire({
