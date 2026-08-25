@@ -2479,17 +2479,19 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
 
     // Prune entries in SQLite openproject_time_entries that were deleted from OpenProject Server
     if (activeOpIds.size > 0) {
-        const idList = Array.from(activeOpIds);
-        const chunkSize = 500;
-        for (let i = 0; i < idList.length; i += chunkSize) {
-            const chunk = idList.slice(i, i + chunkSize);
-            const placeholders = chunk.map(() => '?').join(',');
-            db.run(`
-                DELETE FROM openproject_time_entries 
-                WHERE openproject_id NOT IN (${placeholders}) 
-                  AND strftime('%Y', spent_on) >= '2025'
-            `, chunk);
-        }
+        db.serialize(() => {
+            db.run("CREATE TEMP TABLE IF NOT EXISTS active_op_ids (op_id TEXT PRIMARY KEY)");
+            db.run("DELETE FROM active_op_ids");
+            const stmtId = db.prepare("INSERT OR IGNORE INTO active_op_ids (op_id) VALUES (?)");
+            Array.from(activeOpIds).forEach(id => stmtId.run(id));
+            stmtId.finalize(() => {
+                db.run(`
+                    DELETE FROM openproject_time_entries 
+                    WHERE strftime('%Y', spent_on) >= '2025' 
+                      AND openproject_id NOT IN (SELECT op_id FROM active_op_ids)
+                `);
+            });
+        });
     }
 
     return {
@@ -2718,32 +2720,37 @@ async function recalculateAndCacheRanking() {
         LEFT JOIN (
             SELECT 
                 user_key,
+                user_name_key,
                 SUM(CASE WHEN day_hours > 8.0 THEN 8.0 ELSE day_hours END) as total_work_hours,
                 SUM(CASE WHEN day_hours > 8.0 THEN day_hours - 8.0 ELSE 0.0 END) as total_ot_hours
             FROM (
                 SELECT 
                     t.user_id as user_key,
+                    t.user_name as user_name_key,
                     t.spent_on,
                     SUM(t.hours) as day_hours
                 FROM openproject_time_entries t
                 WHERE 1=1 ${opDateCond}
-                GROUP BY t.user_id, t.spent_on
+                GROUP BY t.user_id, t.user_name, t.spent_on
 
                 UNION ALL
 
                 SELECT 
                     h.user_id as user_key,
+                    '' as user_name_key,
                     COALESCE(NULLIF(h.start_date, ''), DATE(h.created_at)) as spent_on,
                     SUM(CAST(h.spent_hours AS REAL)) as day_hours
                 FROM task_history h
                 WHERE 1=1 ${localDateCond}
                 GROUP BY h.user_id, spent_on
             )
-            GROUP BY user_key
+            GROUP BY user_key, user_name_key
         ) daily_agg ON (
             daily_agg.user_key = CAST(a.id AS TEXT)
             OR daily_agg.user_key = u.openproject_id
             OR daily_agg.user_key = u.id
+            OR (daily_agg.user_name_key IS NOT NULL AND LOWER(TRIM(daily_agg.user_name_key)) = LOWER(TRIM(a.name)))
+            OR (daily_agg.user_name_key IS NOT NULL AND LOWER(TRIM(daily_agg.user_name_key)) = LOWER(TRIM(u.name)))
         )
         GROUP BY a.id, a.name, u.name
         ORDER BY total_hours DESC, task_count DESC, COALESCE(u.name, a.name) ASC
