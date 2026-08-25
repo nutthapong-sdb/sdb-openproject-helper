@@ -581,36 +581,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    const refreshUnloggedBtn = document.getElementById('refreshUnloggedBtn');
-    if (refreshUnloggedBtn) {
-        refreshUnloggedBtn.addEventListener('click', async () => {
-            const icon = document.getElementById('refreshUnloggedIcon');
-            if (icon) icon.textContent = '⏳';
-            refreshUnloggedBtn.disabled = true;
-            try {
-                // Fetch fresh time entries from OpenProject Server live
-                await safeFetchJson('/api/openproject/time-entries/sync', { method: 'POST' });
-                await loadUserStats();
-                if (typeof Swal !== 'undefined') {
-                    Swal.fire({
-                        icon: 'success',
-                        title: 'ดึงข้อมูลสดสำเร็จ',
-                        text: 'ดึงเวลาจริงล่าสุดจาก OpenProject Server เรียบร้อยแล้ว',
-                        timer: 1800,
-                        showConfirmButton: false,
-                        toast: true,
-                        position: 'top-end'
-                    });
-                }
-            } catch (e) {
-                console.error('[refreshUnloggedBtn]', e);
-                await loadUserStats();
-            } finally {
-                if (icon) icon.textContent = '🔄';
-                refreshUnloggedBtn.disabled = false;
-            }
-        });
-    }
+
 
     const deleteFromHistory = async (historyId, openprojectId, subject) => {
         // Confirmation Dialog
