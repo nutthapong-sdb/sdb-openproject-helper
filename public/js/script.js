@@ -261,6 +261,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         return dateStr;
     };
 
+    // Helper: Safely fetch JSON response with Content-Type validation
+    const safeFetchJson = async (url, options = {}) => {
+        const res = await fetch(url, options);
+        const contentType = res.headers.get('content-type') || '';
+        let data = null;
+        if (contentType.includes('application/json')) {
+            data = await res.json().catch(() => null);
+        } else {
+            const text = await res.text().catch(() => '');
+            data = { error: `Server response is non-JSON (${res.status}): ${text.slice(0, 150)}` };
+        }
+        if (!res.ok) {
+            const errMsg = (data && (data.error || data.message)) || `HTTP ${res.status}`;
+            throw new Error(errMsg);
+        }
+        return data || {};
+    };
+
     // Load User Stats
     const loadUserStats = async () => {
         const tbody = document.getElementById('usersStatsBody');
@@ -268,9 +286,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!tbody) return;
 
         try {
-            const response = await fetch('/api/users-stats');
-            if (!response.ok) throw new Error('Failed to fetch stats');
-            const data = await response.json();
+            const data = await safeFetchJson('/api/users-stats');
 
             let users = [];
             let settings = null;
@@ -318,25 +334,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                 tr.className = `rank-row rank-${rank}`;
 
                 let iconHtml = '';
-                let nameStyle = 'font-weight: 500; white-space: normal; word-break: break-word; font-size: 0.9rem; line-height: 1.2;';
+                if (rank === 1) iconHtml = '<div class="rank-crown crown-gold"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></div>';
+                else if (rank === 2) iconHtml = '<div class="rank-crown crown-silver"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></div>';
+                else if (rank === 3) iconHtml = '<div class="rank-crown crown-bronze"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg></div>';
 
-                if (rank === 1) {
-                    iconHtml = '<div class="rank-icon">👑</div>';
-                    nameStyle += 'color: #ffd700; text-shadow: 0 0 5px rgba(255, 215, 0, 0.5);';
-                } else if (rank === 2) {
-                    iconHtml = '<div class="rank-icon">⭐</div>';
-                    nameStyle += 'color: #ffd700;';
-                } else if (rank === 3) {
-                    nameStyle += 'color: #e0e0e0;';
-                } else if (rank === 4) {
-                    nameStyle += 'color: #cd7f32;';
-                }
+                let nameStyle = 'font-weight: 500; font-size: 0.95rem; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 150px; display: inline-block; vertical-align: middle;';
+                if (rank === 1) nameStyle += ' color: #ffe082; font-weight: bold;';
+                else if (rank === 2) nameStyle += ' color: #e0e0e0; font-weight: bold;';
+                else if (rank === 3) nameStyle += ' color: #ffcc80; font-weight: bold;';
 
-                const rawHours = parseFloat(u.total_hours || 0);
-                const displayHours = Number.isInteger(rawHours) ? rawHours.toString() : rawHours.toFixed(1);
+                const displayHours = typeof u.total_hours === 'number' ? u.total_hours.toFixed(1) : parseFloat(u.total_hours || 0).toFixed(1);
 
                 tr.innerHTML = `
-                    <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center; color: #888; font-weight: ${rank <= 3 ? 'bold' : 'normal'}; font-size: ${rank <= 3 ? '1.1rem' : '0.9rem'};">${rank}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center; font-weight: bold; font-size: 1rem; color: ${rank <= 3 ? 'var(--primary-color)' : '#aaa'};">${rank}</td>
                     <td style="padding: 10px; border-bottom: 1px solid #333; display: flex; align-items: center;">
                         <div class="rank-avatar-container">
                              ${iconHtml}
@@ -352,8 +362,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
         } catch (error) {
-            console.error(error);
-            tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #c62828;">Error.</td></tr>';
+            console.error('[loadUserStats]', error);
+            tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; padding: 20px; color: #c62828;">Error loading stats: ${error.message}</td></tr>`;
         }
     };
 
@@ -365,9 +375,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             syncTimeBtn.disabled = true;
 
             try {
-                const res = await fetch('/api/openproject/time-entries/sync', { method: 'POST' });
-                const data = await res.json();
-                if (res.ok && data.ok) {
+                const data = await safeFetchJson('/api/openproject/time-entries/sync', { method: 'POST' });
+                if (data && data.ok) {
                     if (typeof showToast === 'function') {
                         showToast(`ดึงข้อมูลเวลาจริงจาก OpenProject สำเร็จ (${data.count} รายการ)`, 'success');
                     } else if (typeof Swal !== 'undefined') {
@@ -375,7 +384,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                     await loadUserStats();
                 } else {
-                    const msg = data.error || 'Failed to sync time entries';
+                    const msg = (data && data.error) || 'Failed to sync time entries';
                     if (typeof showToast === 'function') showToast(msg, 'error');
                     else if (typeof Swal !== 'undefined') Swal.fire('Sync Failed', msg, 'error');
                 }

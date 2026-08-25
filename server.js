@@ -1210,7 +1210,10 @@ async function puppeteerFetch(url, options = {}, specificApiKey = null, timeoutM
 
             if (method === 'GET') {
                 const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-                const content = await page.evaluate(() => document.body.innerText);
+                const content = await page.evaluate(() => {
+                    const pre = document.querySelector('pre');
+                    return pre ? pre.innerText : document.body.innerText;
+                });
 
                 try {
                     return { status: response.status(), data: JSON.parse(content) };
@@ -1220,11 +1223,11 @@ async function puppeteerFetch(url, options = {}, specificApiKey = null, timeoutM
                     const debugDir = './public/debug';
                     if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir);
                     const shotPath = `${debugDir}/error_${timestamp}.png`;
-                    await page.screenshot({ path: shotPath, fullPage: true });
-                    console.error(`[Puppeteer] JSON Parse Failed. content preview: ${content.substring(0, 200)}...`);
+                    await page.screenshot({ path: shotPath, fullPage: true }).catch(() => {});
+                    console.error(`[Puppeteer] JSON Parse Failed. content preview: ${(content || '').substring(0, 200)}...`);
                     console.error(`[Puppeteer] Screenshot saved to: ${shotPath}`);
 
-                    return { status: response.status(), data: content, error: 'Invalid JSON response (Check Debug Screenshot)' };
+                    return { status: response.status(), data: content, error: 'Invalid JSON response from OpenProject API' };
                 }
 
             } else {
@@ -2335,10 +2338,11 @@ async function syncOpenProjectTimeEntries(apiKey) {
         const url = `${HOST}/api/v3/time_entries?pageSize=${pageSize}&offset=${offset}`;
         const result = await puppeteerFetch(url, { method: 'GET' }, apiKey);
 
-        if (result.status !== 200 || !result.data || !result.data._embedded) {
+        if (result.status !== 200 || !result.data || typeof result.data !== 'object' || !result.data._embedded) {
             if (offset === 1) {
                 stmt.finalize();
-                throw new Error((result.data && result.data.message) || result.error || `OpenProject API returned status ${result.status}`);
+                const errDetail = (typeof result.data === 'object' && result.data && result.data.message) ? result.data.message : (result.error || `OpenProject returned non-JSON response (${result.status})`);
+                throw new Error(`OpenProject API error: ${errDetail}`);
             }
             break;
         }
