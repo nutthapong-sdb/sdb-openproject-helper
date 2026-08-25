@@ -267,6 +267,18 @@
                             </tbody>
                         </table>
                     </div>
+                <!-- Panel 2.5: Unlogged Workdays Widget (กล่องสำหรับกรอกช่วงเวลาค้างที่ยังไม่ได้กรอก) -->
+                <div id="unloggedWorkdaysCard" class="panel right-panel" style="width: 100%; max-width: none; min-width: 0; margin-bottom: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <h2 style="margin: 0; font-size: 1.05rem; color: #ffca28; display: flex; align-items: center; gap: 6px;">
+                            <span>⚠️</span>
+                            <span>ช่วงเวลาค้างที่ยังไม่ได้กรอก (เป้าหมาย 8.0 ชม./วัน)</span>
+                        </h2>
+                        <span id="unloggedCountBadge" style="font-size: 0.78rem; background: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid rgba(255,82,82,0.3); padding: 2px 8px; border-radius: 10px; font-weight: 500;"></span>
+                    </div>
+                    <div id="unloggedWorkdaysContainer" style="max-height: 220px; overflow-y: auto; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 8px;">
+                        <div style="text-align: center; color: #aaa; padding: 10px; font-size: 0.85rem;">กำลังโหลดรายการวันค้าง...</div>
+                    </div>
                 </div>
 
                 <!-- Panel 3: History (Moved Here) -->
