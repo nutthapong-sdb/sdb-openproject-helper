@@ -626,14 +626,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 closeSyncModal();
                 if (typeof Swal !== 'undefined') {
-                    Swal.fire({
+                    await Swal.fire({
                         icon: 'success',
                         title: 'ดึงข้อมูลสดสำเร็จ',
-                        text: `อัปเดตข้อมูลเวลาจริงเรียบร้อยแล้ว (${data.count || 0} รายการ)`,
-                        timer: 2000,
-                        showConfirmButton: false,
-                        toast: true,
-                        position: 'top-end'
+                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">อัปเดตข้อมูลเวลาจริงเรียบร้อยแล้ว (${data.count || 0} รายการ)</p>`,
+                        showConfirmButton: true,
+                        confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
+                        confirmButtonColor: '#00897b',
+                        allowOutsideClick: false,
+                        allowEscapeKey: false
                     });
                 }
             } catch (e) {
@@ -694,14 +695,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 closeSyncModal();
                 if (typeof Swal !== 'undefined') {
-                    Swal.fire({
+                    await Swal.fire({
                         icon: 'success',
                         title: 'เคลียร์และดึงข้อมูลใหม่สำเร็จ',
-                        text: `ล้างฐานข้อมูลและดึงข้อมูลใหม่เรียบร้อยแล้ว (${data.count || 0} รายการ)`,
-                        timer: 2500,
-                        showConfirmButton: false,
-                        toast: true,
-                        position: 'top-end'
+                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">ล้างฐานข้อมูลเดิมและดึงข้อมูลชั่วโมงทำงานทั้งหมดจาก OpenProject API เรียบร้อยแล้ว (${data.count || 0} รายการ)</p>`,
+                        showConfirmButton: true,
+                        confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
+                        confirmButtonColor: '#00897b',
+                        allowOutsideClick: false,
+                        allowEscapeKey: false
                     });
                 }
             } catch (e) {
@@ -733,12 +735,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                         await loadUserStats();
                         if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
                         if (typeof Swal !== 'undefined') {
-                            Swal.fire({
+                            await Swal.fire({
                                 icon: 'success',
                                 title: 'อัปเดตข้อมูลสำเร็จ',
-                                text: 'ระบบดึงข้อมูลสดจาก OpenProject เรียบร้อยแล้ว',
-                                timer: 2000,
-                                showConfirmButton: false
+                                html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">ระบบดึงข้อมูลสดจาก OpenProject เรียบร้อยแล้ว</p>`,
+                                showConfirmButton: true,
+                                confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
+                                confirmButtonColor: '#00897b',
+                                allowOutsideClick: false,
+                                allowEscapeKey: false
                             });
                         }
                     }
@@ -795,14 +800,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 
                 closeSyncModal();
                 if (typeof Swal !== 'undefined') {
-                    Swal.fire({
+                    await Swal.fire({
                         icon: 'success',
                         title: 'ดึงข้อมูลสดสำเร็จ',
-                        text: `อัปเดตรายการเวลาช่วง ${rangeLabel} เรียบร้อยแล้ว (${data.count || 0} รายการ)`,
-                        timer: 2000,
-                        showConfirmButton: false,
-                        toast: true,
-                        position: 'top-end'
+                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">อัปเดตรายการเวลาช่วง ${rangeLabel} เรียบร้อยแล้ว (${data.count || 0} รายการ)</p>`,
+                        showConfirmButton: true,
+                        confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
+                        confirmButtonColor: '#00897b',
+                        allowOutsideClick: false,
+                        allowEscapeKey: false
                     });
                 }
             } catch (e) {
@@ -1107,13 +1113,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const result = await response.json();
 
                 if (response.ok) {
-                    Swal.fire({
+                    await Swal.fire({
                         icon: 'success',
                         title: 'Sync Complete',
                         text: result.message || 'User list synchronized successfully.',
-                        // timer: 2000,
                         showConfirmButton: true,
-                        confirmButtonText: 'OK'
+                        confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
+                        confirmButtonColor: '#00897b',
+                        allowOutsideClick: false,
+                        allowEscapeKey: false
                     });
                     loadAssignees(); // Reload dropdown
                 } else {
@@ -1154,7 +1162,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                         title: 'Sync Complete',
                         text: `Synchronized ${result.count} projects successfully.`,
                         showConfirmButton: true,
-                        confirmButtonText: 'Great, thanks!'
+                        confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
+                        confirmButtonColor: '#00897b',
+                        allowOutsideClick: false,
+                        allowEscapeKey: false
                     });
 
                     // Reload after user closes the popup
