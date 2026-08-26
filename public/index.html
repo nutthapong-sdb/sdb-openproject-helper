@@ -272,12 +272,18 @@
 
                 <!-- Panel 2.5: Unlogged Workdays Widget (รายการที่ยังไม่ลงข้อมูล) -->
                 <div id="unloggedWorkdaysCard" class="panel right-panel" style="width: 100%; max-width: none; min-width: 0;">
-                    <!-- Header Row (Single Clean Line) -->
-                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;">
-                        <h2 id="unloggedCardTitle" style="margin: 0; font-size: 1rem; color: #fff; font-weight: 600; white-space: nowrap;">รายการที่ยังไม่ลงข้อมูล</h2>
-                        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;">
-                            <label for="unloggedSyncRangeSelect" style="font-size: 0.75rem; color: #aaa; margin: 0; white-space: nowrap;">ดึงย้อนหลัง:</label>
-                            <select id="unloggedSyncRangeSelect" style="background: #2a2a3c; color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 2px 6px; font-size: 0.75rem; cursor: pointer;" title="เลือกระยะเวลาย้อนหลังเพื่อความรวดเร็วในการค้นหา">
+                    <!-- Header Row (Strictly 1 Single Clean Line) -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: nowrap; overflow: hidden;">
+                        <!-- Left: Title + Badge -->
+                        <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                            <h2 id="unloggedCardTitle" style="margin: 0; font-size: 0.95rem; color: #fff; font-weight: 600; white-space: nowrap;">รายการที่ยังไม่ลงข้อมูล</h2>
+                            <span id="unloggedCountBadge" style="font-size: 0.72rem; background: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid rgba(255,82,82,0.3); padding: 1px 6px; border-radius: 10px; font-weight: 500; white-space: nowrap;"></span>
+                        </div>
+
+                        <!-- Right: Range Dropdown + Refresh Button -->
+                        <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0; white-space: nowrap;">
+                            <label for="unloggedSyncRangeSelect" style="font-size: 0.72rem; color: #aaa; margin: 0; white-space: nowrap;">ดึงย้อนหลัง:</label>
+                            <select id="unloggedSyncRangeSelect" style="background: #2a2a3c; color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 2px 4px; font-size: 0.72rem; cursor: pointer;" title="เลือกระยะเวลาย้อนหลังเพื่อความรวดเร็วในการค้นหา">
                                 <option value="7">1 อาทิตย์</option>
                                 <option value="14">2 อาทิตย์</option>
                                 <option value="30" selected>1 เดือน</option>
@@ -285,10 +291,9 @@
                                 <option value="180">6 เดือน</option>
                                 <option value="365">1 ปี</option>
                             </select>
-                            <button type="button" id="refreshUnloggedBtn" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #ccc; border-radius: 6px; padding: 2px 8px; font-size: 0.75rem; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;" title="กดเพื่ออัปเดตรายการงานค้างล่าสุด">
+                            <button type="button" id="refreshUnloggedBtn" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #ccc; border-radius: 6px; padding: 2px 6px; font-size: 0.72rem; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;" title="กดเพื่ออัปเดตรายการงานค้างล่าสุด">
                                 <span id="refreshUnloggedIcon">🔄</span> Refresh
                             </button>
-                            <span id="unloggedCountBadge" style="font-size: 0.78rem; background: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid rgba(255,82,82,0.3); padding: 2px 8px; border-radius: 10px; font-weight: 500;"></span>
                         </div>
                     </div>
 
