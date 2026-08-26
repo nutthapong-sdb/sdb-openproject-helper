@@ -608,18 +608,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             const timeoutId = setTimeout(() => controller.abort(), 300000);
 
             try {
-                const response = await fetch('/api/openproject/time-entries/sync', {
+                const data = await safeFetchJson('/api/openproject/time-entries/sync', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ days }),
                     signal: controller.signal
                 });
                 clearTimeout(timeoutId);
-
-                const data = await response.json();
-                if (!response.ok) {
-                    throw new Error(data.error || 'Failed to sync time entries');
-                }
 
                 await loadUserStats();
                 if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
@@ -678,17 +673,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             const timeoutId = setTimeout(() => controller.abort(), 300000);
 
             try {
-                const response = await fetch('/api/openproject/time-entries/clear-and-resync', {
+                const data = await safeFetchJson('/api/openproject/time-entries/clear-and-resync', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     signal: controller.signal
                 });
                 clearTimeout(timeoutId);
-
-                const data = await response.json();
-                if (!response.ok) {
-                    throw new Error(data.error || 'Failed to clear and resync time entries');
-                }
 
                 await loadUserStats();
                 if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
@@ -781,19 +771,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             const timeoutId = setTimeout(() => controller.abort(), 300000);
 
             try {
-                const response = await fetch('/api/openproject/time-entries/sync', {
+                const data = await safeFetchJson('/api/openproject/time-entries/sync', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ days }),
                     signal: controller.signal
                 });
                 clearTimeout(timeoutId);
-
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(data.error || 'Failed to sync time entries');
-                }
 
                 await loadUserStats();
                 if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
