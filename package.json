@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
-    "test": "PW_HEADLESS=false PW_SLOWMO=150 node tests/auth-regression.mjs && PW_HEADLESS=false PW_SLOWMO=150 node tests/wfh-regression.mjs && PLAYWRIGHT_HEADLESS=false PLAYWRIGHT_SLOWMO=250 PLAYWRIGHT_INTERACTIVE_DATE_PICKER=false PLAYWRIGHT_TRACE_LOG=true PLAYWRIGHT_POSTRUN_PAUSE_MS=5000 PW_HEADLESS=false PW_SLOWMO=150 node tests/wfh-dryrun.e2e.mjs"
+    "test": "node tests/e2e-webui.spec.mjs && node tests/time-entries-regression.mjs && node tests/auth-regression.mjs"
   },
   "keywords": [],
   "author": "",
