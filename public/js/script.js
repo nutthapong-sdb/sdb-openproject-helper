@@ -460,6 +460,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (tabExcludedBtnElem) {
                 tabExcludedBtnElem.style.display = isAdminUser ? 'inline-block' : 'none';
             }
+            const clearResyncBtnElem = document.getElementById('clearResyncTimeBtn');
+            if (clearResyncBtnElem) {
+                clearResyncBtnElem.style.display = isAdminUser ? 'inline-flex' : 'none';
+            }
 
             if (unloggedTitle) {
                 unloggedTitle.textContent = 'รายการที่ยังไม่ลงข้อมูล';

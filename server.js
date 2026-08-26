@@ -2979,7 +2979,7 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
     }
 });
 
-// POST Force Clear local DB and Resync All Time Entries from OpenProject API
+// POST Force Clear local DB and Resync All Time Entries from OpenProject API (Admin only)
 app.post('/api/openproject/time-entries/clear-and-resync', async (req, res) => {
     const userApiKey = req.cookies.user_apikey;
     if (!userApiKey) {
@@ -2987,6 +2987,12 @@ app.post('/api/openproject/time-entries/clear-and-resync', async (req, res) => {
     }
 
     const user = await getUserFromSessionOrKey(req);
+    const isAdmin = user && (user.role === 'admin' || user.role === 'root');
+
+    if (!isAdmin) {
+        return res.status(403).json({ error: "สิทธิ์ไม่ถูกต้อง: เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่สามารถบังคับเคลียร์และดึงข้อมูลใหม่ทั้งหมดได้" });
+    }
+
     const userId = user ? String(user.id) : (req.cookies.sdb_session || 'unknown');
     const todayStr = new Date().toISOString().split('T')[0];
 
