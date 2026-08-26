@@ -2479,15 +2479,12 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
 
         let pageNum = 1;
         const pageSize = 500;
+        const maxPagesToFetch = 10; // Fetch top 5,000 entries (covers ~1 year of activity)
         const sortParam = JSON.stringify([['id', 'desc']]);
 
-        const cutoffObj = new Date();
-        cutoffObj.setDate(cutoffObj.getDate() - 90);
-        const cutoffStr = cutoffObj.toISOString().split('T')[0];
-
-        while (true) {
+        while (pageNum <= maxPagesToFetch) {
             const url = `${HOST}/api/v3/time_entries?sortBy=${encodeURIComponent(sortParam)}&pageSize=${pageSize}&offset=${pageNum}`;
-            console.log(`[TimeEntries] Fast-fetching page ${pageNum} with API Key ${workingKey.substring(0, 8)}...`);
+            console.log(`[TimeEntries] Fast-fetching page ${pageNum}/${maxPagesToFetch} with API Key ${workingKey.substring(0, 8)}...`);
 
             const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
             if (!response || response.status() !== 200) {
@@ -2513,14 +2510,10 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
 
             if (elements.length === 0) break;
 
-            let reachedOldEntries = false;
             elements.forEach(elem => {
                 const openproject_id = String(elem.id);
                 activeOpIds.add(openproject_id);
                 const spent_on = (elem.spentOn || '').slice(0, 10);
-                if (spent_on && spent_on < cutoffStr) {
-                    reachedOldEntries = true;
-                }
                 const hours = parseIsoDuration(elem.hours);
                 const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
                 const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
@@ -2533,7 +2526,7 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
                 totalSynced++;
             });
 
-            if (elements.length < pageSize || reachedOldEntries) break;
+            if (elements.length < pageSize) break;
             pageNum++;
         }
     } finally {
@@ -2552,9 +2545,9 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
             stmtId.finalize(() => {
                 db.run(`
                     DELETE FROM openproject_time_entries 
-                    WHERE spent_on >= ?
+                    WHERE spent_on >= '2025-01-01'
                       AND openproject_id NOT IN (SELECT op_id FROM active_op_ids)
-                `, [cutoffStr]);
+                `);
             });
         });
     }
