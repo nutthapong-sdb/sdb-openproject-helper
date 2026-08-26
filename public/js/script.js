@@ -576,9 +576,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 else if (typeof showToast === 'function') showToast(msg, 'error');
             } finally {
                 if (icon) icon.textContent = '🔄';
-                syncTimeBtn.disabled = false;
             }
         });
+    }
+
     const refreshUnloggedBtn = document.getElementById('refreshUnloggedBtn');
     if (refreshUnloggedBtn) {
         refreshUnloggedBtn.addEventListener('click', async () => {
@@ -622,6 +623,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
     }
+
+    const deleteFromHistory = async (historyId, openprojectId, subject) => {
         // Confirmation Dialog
         const result = await Swal.fire({
             title: 'Delete Task?',
