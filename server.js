@@ -2389,8 +2389,9 @@ function parseIsoDuration(durationStr) {
 }
 
 // Sync Time Entries directly from OpenProject API /api/v3/time_entries
-async function syncOpenProjectTimeEntries(specificApiKey = null) {
-    console.log('[TimeEntries] Syncing real time entries from OpenProject API...');
+// Options: { specificApiKey, forceFullSync: false, startDate, endDate }
+async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
+    console.log('[TimeEntries] Syncing time entries from OpenProject API...');
 
     // Collect API keys to use (combining current user + all registered users in DB)
     const apiKeys = new Set();
@@ -2405,6 +2406,38 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
 
     if (apiKeys.size === 0) {
         throw new Error('No API keys found to sync OpenProject time entries.');
+    }
+
+    // Determine sync date range
+    let syncStartDate = options.startDate || null;
+    let syncEndDate = options.endDate || new Date().toISOString().split('T')[0];
+
+    if (!options.forceFullSync && !syncStartDate) {
+        // Find MAX(spent_on) in local DB to sync incrementally from (with a 3-day safety buffer)
+        const maxRow = await new Promise(resolve => {
+            db.get("SELECT MAX(spent_on) as max_date FROM openproject_time_entries", [], (err, row) => resolve(row));
+        });
+
+        if (maxRow && maxRow.max_date) {
+            const baseDate = maxRow.max_date < syncEndDate ? maxRow.max_date : syncEndDate;
+            const maxD = new Date(`${baseDate}T00:00:00`);
+            maxD.setDate(maxD.getDate() - 3); // 3-day safety buffer for late edits
+            syncStartDate = maxD.toISOString().split('T')[0];
+        }
+        if (!syncStartDate || syncStartDate > syncEndDate) {
+            syncStartDate = syncEndDate;
+        }
+    }
+
+    let dateFilterParam = '';
+    if (syncStartDate && syncEndDate) {
+        const dateFilter = JSON.stringify([
+            { "spent_on": { "operator": "=d", "values": [syncStartDate, syncEndDate] } }
+        ]);
+        dateFilterParam = `&filters=${encodeURIComponent(dateFilter)}`;
+        console.log(`[TimeEntries] Incremental sync date range: ${syncStartDate} to ${syncEndDate}`);
+    } else {
+        console.log('[TimeEntries] Full sync mode');
     }
 
     let totalSynced = 0;
@@ -2446,12 +2479,6 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
 
     try {
         const page = await browser.newPage();
-
-        // Filter time entries from 2025 onwards for high performance and fast sync under Cloudflare timeout limits
-        const dateFilter = JSON.stringify([
-            { "spent_on": { "operator": ">=d", "values": ["2025-01-01"] } }
-        ]);
-
         const keyToUse = specificApiKey || Array.from(apiKeys)[0];
         const keysList = keyToUse ? [keyToUse] : [];
 
@@ -2462,7 +2489,7 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
             const pageSize = 500;
 
             while (true) {
-                const url = `${HOST}/api/v3/time_entries?pageSize=${pageSize}&offset=${pageNum}`;
+                const url = `${HOST}/api/v3/time_entries?pageSize=${pageSize}&offset=${pageNum}${dateFilterParam}`;
                 console.log(`[TimeEntries] Fast-fetching page ${pageNum} with API Key ${key.substring(0, 8)}...`);
 
                 const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -2517,8 +2544,8 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
 
     stmt.finalize();
 
-    // Prune entries in SQLite openproject_time_entries that were deleted from OpenProject Server
-    if (activeOpIds.size > 0) {
+    // Prune entries in SQLite openproject_time_entries that were deleted from OpenProject Server for synced range
+    if (activeOpIds.size > 0 && syncStartDate && syncEndDate) {
         db.serialize(() => {
             db.run("CREATE TEMP TABLE IF NOT EXISTS active_op_ids (op_id TEXT PRIMARY KEY)");
             db.run("DELETE FROM active_op_ids");
@@ -2527,9 +2554,9 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
             stmtId.finalize(() => {
                 db.run(`
                     DELETE FROM openproject_time_entries 
-                    WHERE strftime('%Y', spent_on) >= '2025' 
+                    WHERE spent_on BETWEEN ? AND ? 
                       AND openproject_id NOT IN (SELECT op_id FROM active_op_ids)
-                `);
+                `, [syncStartDate, syncEndDate]);
             });
         });
     }
@@ -2537,7 +2564,9 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
     return {
         ok: true,
         count: totalSynced,
-        totalInOpenProject: maxTotalInOp
+        totalInOpenProject: maxTotalInOp,
+        startDate: syncStartDate,
+        endDate: syncEndDate
     };
 }
 

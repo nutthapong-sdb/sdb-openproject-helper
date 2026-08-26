@@ -579,11 +579,40 @@ document.addEventListener('DOMContentLoaded', async () => {
                 syncTimeBtn.disabled = false;
             }
         });
+    const refreshUnloggedBtn = document.getElementById('refreshUnloggedBtn');
+    if (refreshUnloggedBtn) {
+        refreshUnloggedBtn.addEventListener('click', async () => {
+            const icon = document.getElementById('refreshUnloggedIcon');
+            if (icon) icon.textContent = '⏳';
+            refreshUnloggedBtn.disabled = true;
+            try {
+                // Trigger fast incremental sync from OpenProject API
+                const data = await safeFetchJson('/api/openproject/time-entries/sync', { method: 'POST' });
+                await loadUserStats();
+                if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
+                
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'ดึงข้อมูลสดสำเร็จ',
+                        text: `อัปเดตรายการเวลาล่าสุดเรียบร้อยแล้ว (${data.count || 0} รายการ)`,
+                        timer: 1800,
+                        showConfirmButton: false,
+                        toast: true,
+                        position: 'top-end'
+                    });
+                }
+            } catch (e) {
+                console.error('[refreshUnloggedBtn]', e);
+                const msg = e.message || 'ไม่สามารถดึงข้อมูลสดได้';
+                if (typeof Swal !== 'undefined') Swal.fire('Notice', msg, 'info');
+                await loadUserStats();
+            } finally {
+                if (icon) icon.textContent = '🔄';
+                refreshUnloggedBtn.disabled = false;
+            }
+        });
     }
-
-
-
-    const deleteFromHistory = async (historyId, openprojectId, subject) => {
         // Confirmation Dialog
         const result = await Swal.fire({
             title: 'Delete Task?',
