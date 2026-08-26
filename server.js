@@ -2397,22 +2397,24 @@ let activeSyncState = {
 };
 
 // Sync Time Entries directly from OpenProject API /api/v3/time_entries
-// Options: { days: 30 } (Supports 7, 14, 30, 90, 180, 365 days)
+// Options: { days: 30, forceAll: false } (Supports 7, 14, 30, 90, 180, 365 days, or forceAll for full 20,000+ sync)
 async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
+    const isForceAll = !!options.forceAll;
     const days = parseInt(options.days || 30);
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - days);
-    const cutoffStr = cutoffDate.toISOString().split('T')[0];
+    const cutoffStr = isForceAll ? '2000-01-01' : cutoffDate.toISOString().split('T')[0];
 
-    // Determine max pages to fetch based on requested days range
+    // Determine max pages to fetch based on requested days range or forceAll
     let maxPagesToFetch = 3;
-    if (days <= 7) maxPagesToFetch = 1;
+    if (isForceAll) maxPagesToFetch = 45;
+    else if (days <= 7) maxPagesToFetch = 1;
     else if (days <= 14) maxPagesToFetch = 2;
     else if (days <= 30) maxPagesToFetch = 3;
     else if (days <= 90) maxPagesToFetch = 6;
     else maxPagesToFetch = 10;
 
-    console.log(`[TimeEntries] Syncing time entries from OpenProject API (range: past ${days} days, cutoff: ${cutoffStr}, max pages: ${maxPagesToFetch})...`);
+    console.log(`[TimeEntries] Syncing time entries from OpenProject API (forceAll: ${isForceAll}, range: past ${days} days, cutoff: ${cutoffStr}, max pages: ${maxPagesToFetch})...`);
 
     // Collect API keys to use (combining current user + all registered users in DB)
     const apiKeys = new Set();
@@ -2531,7 +2533,7 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
                 const openproject_id = String(elem.id);
                 activeOpIds.add(openproject_id);
                 const spent_on = (elem.spentOn || '').slice(0, 10);
-                if (spent_on && spent_on < cutoffStr) {
+                if (!isForceAll && spent_on && spent_on < cutoffStr) {
                     reachedCutoff = true;
                 }
                 const hours = parseIsoDuration(elem.hours);
@@ -2971,6 +2973,65 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
     } catch (e) {
         console.error('Time entries sync error:', e);
         res.status(500).json({ error: e.message || 'Sync failed' });
+    } finally {
+        activeSyncState.active = false;
+        activeSyncState.startTime = null;
+    }
+});
+
+// POST Force Clear local DB and Resync All Time Entries from OpenProject API
+app.post('/api/openproject/time-entries/clear-and-resync', async (req, res) => {
+    const userApiKey = req.cookies.user_apikey;
+    if (!userApiKey) {
+        return res.status(401).json({ error: "Missing OpenProject API Key. Please log in first." });
+    }
+
+    const user = await getUserFromSessionOrKey(req);
+    const userId = user ? String(user.id) : (req.cookies.sdb_session || 'unknown');
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    if (activeSyncState.active && (Date.now() - activeSyncState.startTime) < 300000) {
+        return res.status(409).json({
+            error: "กำลังมีกระบวนการซิงค์ข้อมูลทำงานอยู่แล้ว กรุณารอสักครู่",
+            active: true,
+            durationMs: Date.now() - activeSyncState.startTime
+        });
+    }
+
+    activeSyncState = {
+        active: true,
+        startTime: Date.now(),
+        userId: userId,
+        days: 9999
+    };
+
+    try {
+        console.log('[ClearAndResync] Clearing local openproject_time_entries database table...');
+        await new Promise((resolve, reject) => {
+            db.run("DELETE FROM openproject_time_entries", [], err => err ? reject(err) : resolve());
+        });
+
+        console.log('[ClearAndResync] Triggering full forceAll sync from OpenProject API...');
+        const syncResult = await syncOpenProjectTimeEntries(userApiKey, { forceAll: true });
+
+        console.log('[ClearAndResync] Recalculating and caching ranking stats...');
+        await recalculateAndCacheRanking();
+
+        db.run("INSERT INTO user_sync_logs (user_id, sync_date) VALUES (?, ?)", [userId, todayStr]);
+
+        const lastSyncRow = await new Promise(resolve => {
+            db.get("SELECT MAX(updated_at) as last_updated FROM ranking_cache", [], (err, row) => resolve(row));
+        });
+
+        res.json({
+            ...syncResult,
+            cleared: true,
+            lastSync: lastSyncRow ? lastSyncRow.last_updated : null,
+            canSyncToday: true
+        });
+    } catch (e) {
+        console.error('Clear and resync time entries error:', e);
+        res.status(500).json({ error: e.message || 'Clear and resync failed' });
     } finally {
         activeSyncState.active = false;
         activeSyncState.startTime = null;

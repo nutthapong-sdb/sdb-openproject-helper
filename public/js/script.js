@@ -647,6 +647,74 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    const clearResyncBtn = document.getElementById('clearResyncTimeBtn');
+    if (clearResyncBtn) {
+        clearResyncBtn.addEventListener('click', async () => {
+            const confirm = typeof Swal !== 'undefined' ? await Swal.fire({
+                title: 'บังคับเคลียร์และดึงข้อมูลใหม่ทั้งหมด?',
+                text: 'ระบบจะทำการล้างฐานข้อมูลชั่วโมงทำงานเดิมในเครื่อง และดึงข้อมูลชั่วโมงทำงานทั้งหมดจาก OpenProject API ตั้งแต่เริ่มต้นใหม่ (อาจใช้เวลา 20-30 วินาที)',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#e53935',
+                confirmButtonText: 'ยืนยัน ล้างและดึงใหม่ทั้งหมด',
+                cancelButtonText: 'ยกเลิก'
+            }) : { isConfirmed: true };
+
+            if (!confirm.isConfirmed) return;
+
+            const icon = document.getElementById('clearResyncTimeIcon');
+            if (icon) icon.textContent = '⏳';
+            clearResyncBtn.disabled = true;
+
+            showBlockingSyncModal('กำลังเคลียร์ฐานข้อมูลเดิม และดึงข้อมูลชั่วโมงทำงานทั้งหมดใหม่จาก OpenProject API...');
+
+            // 5-minute Timeout Controller (300,000 ms)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 300000);
+
+            try {
+                const response = await fetch('/api/openproject/time-entries/clear-and-resync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to clear and resync time entries');
+                }
+
+                await loadUserStats();
+                if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
+
+                closeSyncModal();
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'เคลียร์และดึงข้อมูลใหม่สำเร็จ',
+                        text: `ล้างฐานข้อมูลและดึงข้อมูลใหม่เรียบร้อยแล้ว (${data.count || 0} รายการ)`,
+                        timer: 2500,
+                        showConfirmButton: false,
+                        toast: true,
+                        position: 'top-end'
+                    });
+                }
+            } catch (e) {
+                clearTimeout(timeoutId);
+                closeSyncModal();
+                console.error('[clearResyncBtn]', e);
+                const isTimeout = e.name === 'AbortError';
+                const msg = isTimeout ? 'การซิงค์ข้อมูลใช้เวลานานเกิน 5 นาที (Timeout)' : (e.message || 'ไม่สามารถเคลียร์และดึงข้อมูลสดได้');
+                if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, isTimeout ? 'error' : 'info');
+                await loadUserStats();
+            } finally {
+                if (icon) icon.textContent = '🗑️';
+                clearResyncBtn.disabled = false;
+            }
+        });
+    }
+
     // Check on page load if server sync is currently active (handles browser refresh/reload lock)
     const checkActiveSyncOnPageLoad = async () => {
         try {
