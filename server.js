@@ -2452,7 +2452,10 @@ async function syncOpenProjectTimeEntries(specificApiKey = null) {
             { "spent_on": { "operator": ">=d", "values": ["2025-01-01"] } }
         ]);
 
-        for (const key of apiKeys) {
+        const keyToUse = specificApiKey || Array.from(apiKeys)[0];
+        const keysList = keyToUse ? [keyToUse] : [];
+
+        for (const key of keysList) {
             await page.authenticate({ username: 'apikey', password: key });
 
             let pageNum = 1;
