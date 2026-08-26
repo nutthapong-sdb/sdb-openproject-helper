@@ -587,13 +587,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (icon) icon.textContent = '⏳';
             refreshUnloggedBtn.disabled = true;
 
+            // Keep existing DB data visible on screen while updating in background
             if (unloggedContainer) {
-                unloggedContainer.innerHTML = `
-                    <div style="text-align:center; padding: 25px; color: #8c9eff; font-size: 0.85rem;">
-                        <span style="display:inline-block; animation: spin 1s infinite linear; margin-right: 6px;">⏳</span> 
-                        กำลังดึงและอัปเดตข้อมูลสดจาก OpenProject...
-                    </div>
-                `;
+                unloggedContainer.style.opacity = '0.6';
+                unloggedContainer.style.transition = 'opacity 0.2s ease';
             }
 
             try {
@@ -620,6 +617,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await loadUserStats();
             } finally {
                 if (icon) icon.textContent = '🔄';
+                if (unloggedContainer) unloggedContainer.style.opacity = '1';
                 refreshUnloggedBtn.disabled = false;
             }
         });
