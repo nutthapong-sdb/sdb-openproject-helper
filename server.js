@@ -2408,29 +2408,13 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
         throw new Error('No API keys found to sync OpenProject time entries.');
     }
 
-    // Determine sync date range (default: past 30 days to today for fast 1.5s sync covering active missing workdays)
-    const todayObj = new Date();
-    const todayStr = todayObj.toISOString().split('T')[0];
-    const past30Obj = new Date(todayObj.getFullYear(), todayObj.getMonth(), todayObj.getDate() - 30);
-    const past30Str = past30Obj.toISOString().split('T')[0];
-
-    let syncStartDate = options.startDate || (options.forceFullSync ? null : past30Str);
-    let syncEndDate = options.endDate || todayStr;
-
-    let dateFilterParam = '';
-    if (syncStartDate && syncEndDate) {
-        const dateFilter = JSON.stringify([
-            { "spent_on": { "operator": "=d", "values": [syncStartDate, syncEndDate] } }
-        ]);
-        dateFilterParam = `&filters=${encodeURIComponent(dateFilter)}`;
-        console.log(`[TimeEntries] Incremental sync date range: ${syncStartDate} to ${syncEndDate}`);
-    } else {
-        console.log('[TimeEntries] Full sync mode');
-    }
-
     let totalSynced = 0;
     let maxTotalInOp = 0;
     const activeOpIds = new Set();
+
+    const cutoffObj = new Date();
+    cutoffObj.setDate(cutoffObj.getDate() - 90);
+    const cutoffStr = cutoffObj.toISOString().split('T')[0];
 
     const stmt = db.prepare(`
         INSERT INTO openproject_time_entries (openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment, updated_at)
@@ -2467,64 +2451,90 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
 
     try {
         const page = await browser.newPage();
-        const keyToUse = specificApiKey || Array.from(apiKeys)[0];
-        const keysList = keyToUse ? [keyToUse] : [];
+        
+        // Find a working API key from candidates
+        const candidateKeys = [];
+        if (specificApiKey) candidateKeys.push(specificApiKey);
+        Array.from(apiKeys).forEach(k => {
+            if (!candidateKeys.includes(k)) candidateKeys.push(k);
+        });
 
-        for (const key of keysList) {
+        let workingKey = null;
+        for (const key of candidateKeys) {
             await page.authenticate({ username: 'apikey', password: key });
-
-            let pageNum = 1;
-            const pageSize = 500;
-
-            while (true) {
-                const url = `${HOST}/api/v3/time_entries?pageSize=${pageSize}&offset=${pageNum}${dateFilterParam}`;
-                console.log(`[TimeEntries] Fast-fetching page ${pageNum} with API Key ${key.substring(0, 8)}...`);
-
-                const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-                if (!response || response.status() !== 200) {
-                    break;
-                }
-
-                const jsonText = await page.evaluate(() => {
-                    const pre = document.querySelector('pre');
-                    return pre ? pre.innerText : document.body.innerText;
-                });
-                let data = null;
-                try {
-                    data = JSON.parse(jsonText);
-                } catch {
-                    break;
-                }
-
-                if (!data || !data._embedded) break;
-
-                const elements = data._embedded.elements || [];
-                const totalInOp = data.total || elements.length;
-                if (totalInOp > maxTotalInOp) maxTotalInOp = totalInOp;
-
-                if (elements.length === 0) break;
-
-                db.serialize(() => {
-                    elements.forEach(elem => {
-                        const openproject_id = String(elem.id);
-                        activeOpIds.add(openproject_id);
-                        const spent_on = (elem.spentOn || '').slice(0, 10);
-                        const hours = parseIsoDuration(elem.hours);
-                        const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
-                        const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
-                        const user_name = elem._links && elem._links.user ? (elem._links.user.title || '') : '';
-                        const work_package_id = elem._links && elem._links.workPackage ? elem._links.workPackage.href.split('/').pop() : '';
-                        const work_package_title = elem._links && elem._links.workPackage ? (elem._links.workPackage.title || '') : '';
-                        const project_name = elem._links && elem._links.project ? (elem._links.project.title || '') : '';
-
-                        stmt.run([openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment]);
-                        totalSynced++;
-                    });
-                });
-
-                if (elements.length < pageSize) break;
-                pageNum++;
+            const testUrl = `${HOST}/api/v3/time_entries?pageSize=1&offset=1`;
+            const testResp = await page.goto(testUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => null);
+            if (testResp && testResp.status() === 200) {
+                workingKey = key;
+                console.log(`[TimeEntries] Validated working API Key ${key.substring(0, 8)}...`);
+                break;
             }
+        }
+
+        if (!workingKey) {
+            throw new Error('Could not authenticate with any OpenProject API Key.');
+        }
+
+        await page.authenticate({ username: 'apikey', password: workingKey });
+
+        let pageNum = 1;
+        const pageSize = 500;
+        const sortParam = JSON.stringify([['id', 'desc']]);
+
+        const cutoffObj = new Date();
+        cutoffObj.setDate(cutoffObj.getDate() - 90);
+        const cutoffStr = cutoffObj.toISOString().split('T')[0];
+
+        while (true) {
+            const url = `${HOST}/api/v3/time_entries?sortBy=${encodeURIComponent(sortParam)}&pageSize=${pageSize}&offset=${pageNum}`;
+            console.log(`[TimeEntries] Fast-fetching page ${pageNum} with API Key ${workingKey.substring(0, 8)}...`);
+
+            const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            if (!response || response.status() !== 200) {
+                break;
+            }
+
+            const jsonText = await page.evaluate(() => {
+                const pre = document.querySelector('pre');
+                return pre ? pre.innerText : document.body.innerText;
+            });
+            let data = null;
+            try {
+                data = JSON.parse(jsonText);
+            } catch {
+                break;
+            }
+
+            if (!data || !data._embedded) break;
+
+            const elements = data._embedded.elements || [];
+            const totalInOp = data.total || elements.length;
+            if (totalInOp > maxTotalInOp) maxTotalInOp = totalInOp;
+
+            if (elements.length === 0) break;
+
+            let reachedOldEntries = false;
+            elements.forEach(elem => {
+                const openproject_id = String(elem.id);
+                activeOpIds.add(openproject_id);
+                const spent_on = (elem.spentOn || '').slice(0, 10);
+                if (spent_on && spent_on < cutoffStr) {
+                    reachedOldEntries = true;
+                }
+                const hours = parseIsoDuration(elem.hours);
+                const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
+                const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
+                const user_name = elem._links && elem._links.user ? (elem._links.user.title || '') : '';
+                const work_package_id = elem._links && elem._links.workPackage ? elem._links.workPackage.href.split('/').pop() : '';
+                const work_package_title = elem._links && elem._links.workPackage ? (elem._links.workPackage.title || '') : '';
+                const project_name = elem._links && elem._links.project ? (elem._links.project.title || '') : '';
+
+                stmt.run([openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment]);
+                totalSynced++;
+            });
+
+            if (elements.length < pageSize || reachedOldEntries) break;
+            pageNum++;
         }
     } finally {
         await browser.close().catch(() => {});
@@ -2532,8 +2542,8 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
 
     stmt.finalize();
 
-    // Prune entries in SQLite openproject_time_entries that were deleted from OpenProject Server for synced range
-    if (activeOpIds.size > 0 && syncStartDate && syncEndDate) {
+    // Prune entries in SQLite openproject_time_entries from cutoff onwards that were deleted from OpenProject Server
+    if (activeOpIds.size > 0) {
         db.serialize(() => {
             db.run("CREATE TEMP TABLE IF NOT EXISTS active_op_ids (op_id TEXT PRIMARY KEY)");
             db.run("DELETE FROM active_op_ids");
@@ -2542,9 +2552,9 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
             stmtId.finalize(() => {
                 db.run(`
                     DELETE FROM openproject_time_entries 
-                    WHERE spent_on BETWEEN ? AND ? 
+                    WHERE spent_on >= ?
                       AND openproject_id NOT IN (SELECT op_id FROM active_op_ids)
-                `, [syncStartDate, syncEndDate]);
+                `, [cutoffStr]);
             });
         });
     }
@@ -2552,9 +2562,7 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
     return {
         ok: true,
         count: totalSynced,
-        totalInOpenProject: maxTotalInOp,
-        startDate: syncStartDate,
-        endDate: syncEndDate
+        totalInOpenProject: maxTotalInOp
     };
 }
 
