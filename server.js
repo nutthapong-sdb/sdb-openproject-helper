@@ -2408,26 +2408,14 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
         throw new Error('No API keys found to sync OpenProject time entries.');
     }
 
-    // Determine sync date range
-    let syncStartDate = options.startDate || null;
-    let syncEndDate = options.endDate || new Date().toISOString().split('T')[0];
+    // Determine sync date range (default: past 30 days to today for fast 1.5s sync covering active missing workdays)
+    const todayObj = new Date();
+    const todayStr = todayObj.toISOString().split('T')[0];
+    const past30Obj = new Date(todayObj.getFullYear(), todayObj.getMonth(), todayObj.getDate() - 30);
+    const past30Str = past30Obj.toISOString().split('T')[0];
 
-    if (!options.forceFullSync && !syncStartDate) {
-        // Find MAX(spent_on) in local DB to sync incrementally from (with a 3-day safety buffer)
-        const maxRow = await new Promise(resolve => {
-            db.get("SELECT MAX(spent_on) as max_date FROM openproject_time_entries", [], (err, row) => resolve(row));
-        });
-
-        if (maxRow && maxRow.max_date) {
-            const baseDate = maxRow.max_date < syncEndDate ? maxRow.max_date : syncEndDate;
-            const maxD = new Date(`${baseDate}T00:00:00`);
-            maxD.setDate(maxD.getDate() - 3); // 3-day safety buffer for late edits
-            syncStartDate = maxD.toISOString().split('T')[0];
-        }
-        if (!syncStartDate || syncStartDate > syncEndDate) {
-            syncStartDate = syncEndDate;
-        }
-    }
+    let syncStartDate = options.startDate || (options.forceFullSync ? null : past30Str);
+    let syncEndDate = options.endDate || todayStr;
 
     let dateFilterParam = '';
     if (syncStartDate && syncEndDate) {

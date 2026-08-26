@@ -583,10 +583,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (refreshUnloggedBtn) {
         refreshUnloggedBtn.addEventListener('click', async () => {
             const icon = document.getElementById('refreshUnloggedIcon');
+            const unloggedContainer = document.getElementById('unloggedWorkdaysContainer');
             if (icon) icon.textContent = '⏳';
             refreshUnloggedBtn.disabled = true;
+
+            if (unloggedContainer) {
+                unloggedContainer.innerHTML = `
+                    <div style="text-align:center; padding: 25px; color: #8c9eff; font-size: 0.85rem;">
+                        <span style="display:inline-block; animation: spin 1s infinite linear; margin-right: 6px;">⏳</span> 
+                        กำลังดึงและอัปเดตข้อมูลสดจาก OpenProject...
+                    </div>
+                `;
+            }
+
             try {
-                // Trigger fast incremental sync from OpenProject API
+                // Trigger fast 30-day sync from OpenProject API
                 const data = await safeFetchJson('/api/openproject/time-entries/sync', { method: 'POST' });
                 await loadUserStats();
                 if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
