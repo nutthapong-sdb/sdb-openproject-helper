@@ -275,6 +275,15 @@
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <h2 id="unloggedCardTitle" style="margin: 0; font-size: 1.05rem; color: #fff; font-weight: 600;">รายการที่ยังไม่ลงข้อมูล</h2>
                         <div style="display: flex; align-items: center; gap: 8px;">
+                            <label for="unloggedSyncRangeSelect" style="font-size: 0.72rem; color: #888; margin: 0; display: inline-block;">ดึงย้อนหลัง:</label>
+                            <select id="unloggedSyncRangeSelect" style="background: #2a2a3c; color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 2px 6px; font-size: 0.75rem; cursor: pointer;" title="เลือกระยะเวลาย้อนหลังเพื่อความรวดเร็วในการค้นหา">
+                                <option value="7">1 อาทิตย์</option>
+                                <option value="14">2 อาทิตย์</option>
+                                <option value="30" selected>1 เดือน</option>
+                                <option value="90">3 เดือน</option>
+                                <option value="180">6 เดือน</option>
+                                <option value="365">1 ปี</option>
+                            </select>
                             <button type="button" id="refreshUnloggedBtn" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #ccc; border-radius: 6px; padding: 2px 8px; font-size: 0.75rem; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;" title="กดเพื่ออัปเดตรายการงานค้างล่าสุด">
                                 <span id="refreshUnloggedIcon">🔄</span> Refresh
                             </button>

@@ -2388,10 +2388,31 @@ function parseIsoDuration(durationStr) {
     return Math.round(totalHours * 100) / 100;
 }
 
+// Active Sync State Tracking (for 5-minute timeout and persistent page-reload lock)
+let activeSyncState = {
+    active: false,
+    startTime: null,
+    userId: null,
+    days: 30
+};
+
 // Sync Time Entries directly from OpenProject API /api/v3/time_entries
-// Options: { specificApiKey, forceFullSync: false, startDate, endDate }
+// Options: { days: 30 } (Supports 7, 14, 30, 90, 180, 365 days)
 async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
-    console.log('[TimeEntries] Syncing time entries from OpenProject API...');
+    const days = parseInt(options.days || 30);
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    const cutoffStr = cutoffDate.toISOString().split('T')[0];
+
+    // Determine max pages to fetch based on requested days range
+    let maxPagesToFetch = 3;
+    if (days <= 7) maxPagesToFetch = 1;
+    else if (days <= 14) maxPagesToFetch = 2;
+    else if (days <= 30) maxPagesToFetch = 3;
+    else if (days <= 90) maxPagesToFetch = 6;
+    else maxPagesToFetch = 10;
+
+    console.log(`[TimeEntries] Syncing time entries from OpenProject API (range: past ${days} days, cutoff: ${cutoffStr}, max pages: ${maxPagesToFetch})...`);
 
     // Collect API keys to use (combining current user + all registered users in DB)
     const apiKeys = new Set();
@@ -2411,10 +2432,6 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
     let totalSynced = 0;
     let maxTotalInOp = 0;
     const activeOpIds = new Set();
-
-    const cutoffObj = new Date();
-    cutoffObj.setDate(cutoffObj.getDate() - 90);
-    const cutoffStr = cutoffObj.toISOString().split('T')[0];
 
     const stmt = db.prepare(`
         INSERT INTO openproject_time_entries (openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment, updated_at)
@@ -2479,7 +2496,6 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
 
         let pageNum = 1;
         const pageSize = 500;
-        const maxPagesToFetch = 10; // Fetch top 5,000 entries (covers ~1 year of activity)
         const sortParam = JSON.stringify([['id', 'desc']]);
 
         while (pageNum <= maxPagesToFetch) {
@@ -2510,10 +2526,14 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
 
             if (elements.length === 0) break;
 
+            let reachedCutoff = false;
             elements.forEach(elem => {
                 const openproject_id = String(elem.id);
                 activeOpIds.add(openproject_id);
                 const spent_on = (elem.spentOn || '').slice(0, 10);
+                if (spent_on && spent_on < cutoffStr) {
+                    reachedCutoff = true;
+                }
                 const hours = parseIsoDuration(elem.hours);
                 const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
                 const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
@@ -2526,7 +2546,7 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
                 totalSynced++;
             });
 
-            if (elements.length < pageSize) break;
+            if (elements.length < pageSize || reachedCutoff) break;
             pageNum++;
         }
     } finally {
@@ -2535,7 +2555,7 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
 
     stmt.finalize();
 
-    // Prune entries in SQLite openproject_time_entries from cutoff onwards that were deleted from OpenProject Server
+    // Prune entries in SQLite openproject_time_entries from cutoffStr onwards that were deleted from OpenProject Server
     if (activeOpIds.size > 0) {
         db.serialize(() => {
             db.run("CREATE TEMP TABLE IF NOT EXISTS active_op_ids (op_id TEXT PRIMARY KEY)");
@@ -2545,9 +2565,9 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
             stmtId.finalize(() => {
                 db.run(`
                     DELETE FROM openproject_time_entries 
-                    WHERE spent_on >= '2025-01-01'
+                    WHERE spent_on >= ?
                       AND openproject_id NOT IN (SELECT op_id FROM active_op_ids)
-                `);
+                `, [cutoffStr]);
             });
         });
     }
@@ -2863,6 +2883,26 @@ async function recalculateAndCacheRanking() {
     return rows;
 }
 
+// GET Active Sync Status
+app.get('/api/openproject/time-entries/sync-status', (req, res) => {
+    if (!activeSyncState.active) {
+        return res.json({ active: false });
+    }
+    const durationMs = Date.now() - activeSyncState.startTime;
+    // 5-minute timeout safety auto-reset
+    if (durationMs > 300000) {
+        activeSyncState.active = false;
+        activeSyncState.startTime = null;
+        return res.json({ active: false, timedOut: true });
+    }
+    res.json({
+        active: true,
+        durationMs,
+        userId: activeSyncState.userId,
+        days: activeSyncState.days
+    });
+});
+
 // POST Sync Time Entries from OpenProject API (Rate Limit: 1 sync per day per non-admin user)
 app.post('/api/openproject/time-entries/sync', async (req, res) => {
     const userApiKey = req.cookies.user_apikey;
@@ -2874,6 +2914,17 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
     const userId = user ? String(user.id) : (req.cookies.sdb_session || 'unknown');
     const isAdmin = user && (user.role === 'admin' || user.role === 'root');
     const todayStr = new Date().toISOString().split('T')[0];
+
+    const days = parseInt(req.body?.days || req.query?.days || 30);
+
+    // Lock check: if sync already active and under 5 minutes
+    if (activeSyncState.active && (Date.now() - activeSyncState.startTime) < 300000) {
+        return res.status(409).json({
+            error: "กำลังมีกระบวนการซิงค์ข้อมูลทำงานอยู่แล้ว กรุณารอสักครู่",
+            active: true,
+            durationMs: Date.now() - activeSyncState.startTime
+        });
+    }
 
     // Standard user rate limit: 1 sync per day
     if (!isAdmin && user) {
@@ -2892,8 +2943,15 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
         }
     }
 
+    activeSyncState = {
+        active: true,
+        startTime: Date.now(),
+        userId: userId,
+        days: days
+    };
+
     try {
-        const syncResult = await syncOpenProjectTimeEntries(userApiKey);
+        const syncResult = await syncOpenProjectTimeEntries(userApiKey, { days });
         
         // Recalculate and update ranking cache in DB
         await recalculateAndCacheRanking();
@@ -2908,11 +2966,14 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
         res.json({ 
             ...syncResult, 
             lastSync: lastSyncRow ? lastSyncRow.last_updated : null,
-            canSyncToday: isAdmin // Admins can sync unlimited, non-admins have used their daily quota
+            canSyncToday: isAdmin
         });
     } catch (e) {
         console.error('Time entries sync error:', e);
         res.status(500).json({ error: e.message || 'Sync failed' });
+    } finally {
+        activeSyncState.active = false;
+        activeSyncState.startTime = null;
     }
 });
 

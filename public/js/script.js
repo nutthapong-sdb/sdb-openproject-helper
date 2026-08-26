@@ -580,41 +580,136 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // --- Blocking Sync Modal & Timeout Handler ---
+    let activeSyncPollInterval = null;
+
+    const showBlockingSyncModal = (message = 'กำลังดึงและอัปเดตข้อมูลสดจาก OpenProject...') => {
+        if (typeof Swal === 'undefined') return;
+        Swal.fire({
+            title: '🔄 กำลังดึงข้อมูลสดจาก OpenProject',
+            html: `
+                <div style="text-align: center; padding: 10px 0;">
+                    <p style="font-size: 0.9rem; color: #ccc; margin-bottom: 12px;">${message}</p>
+                    <div style="background: rgba(255,183,77,0.1); border: 1px solid rgba(255,183,77,0.3); border-radius: 8px; padding: 10px; margin-top: 10px;">
+                        <p style="font-size: 0.8rem; color: #ffb74d; margin: 0; font-weight: 500;">
+                            ⚠️ ล็อกหน้าจอเพื่อประมวลผลข้อมูล (Timeout 5 นาที)<br/>
+                            ห้ามทำรายการอื่นชั่วคราว ระบบกำลังดึงข้อมูลสด...
+                        </p>
+                    </div>
+                </div>
+            `,
+            allowOutsideClick: false,
+            allowEscapeKey: false,
+            showConfirmButton: false,
+            didOpen: () => {
+                Swal.showLoading();
+            }
+        });
+    };
+
+    const closeSyncModal = () => {
+        if (activeSyncPollInterval) {
+            clearInterval(activeSyncPollInterval);
+            activeSyncPollInterval = null;
+        }
+        if (typeof Swal !== 'undefined' && Swal.isVisible()) {
+            Swal.close();
+        }
+    };
+
+    // Check on page load if server sync is currently active (handles browser refresh/reload lock)
+    const checkActiveSyncOnPageLoad = async () => {
+        try {
+            const status = await safeFetchJson('/api/openproject/time-entries/sync-status');
+            if (status && status.active && status.durationMs < 300000) {
+                showBlockingSyncModal('พบกระบวนการซิงค์ข้อมูลค้างอยู่ ระบบกำลังล็อกหน้าและรอดึงข้อมูลจนเสร็จ...');
+                
+                activeSyncPollInterval = setInterval(async () => {
+                    const check = await safeFetchJson('/api/openproject/time-entries/sync-status');
+                    if (!check || !check.active || check.durationMs >= 300000) {
+                        closeSyncModal();
+                        await loadUserStats();
+                        if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
+                        if (typeof Swal !== 'undefined') {
+                            Swal.fire({
+                                icon: 'success',
+                                title: 'อัปเดตข้อมูลสำเร็จ',
+                                text: 'ระบบดึงข้อมูลสดจาก OpenProject เรียบร้อยแล้ว',
+                                timer: 2000,
+                                showConfirmButton: false
+                            });
+                        }
+                    }
+                }, 2000);
+            }
+        } catch (e) {
+            console.error('[checkActiveSyncOnPageLoad]', e);
+        }
+    };
+
+    // Run lock check immediately on page load
+    checkActiveSyncOnPageLoad();
+
     const refreshUnloggedBtn = document.getElementById('refreshUnloggedBtn');
     if (refreshUnloggedBtn) {
         refreshUnloggedBtn.addEventListener('click', async () => {
+            const rangeSelect = document.getElementById('unloggedSyncRangeSelect');
+            const days = rangeSelect ? parseInt(rangeSelect.value || 30) : 30;
+            const rangeLabel = rangeSelect ? rangeSelect.options[rangeSelect.selectedIndex].text : '1 เดือน';
+
             const icon = document.getElementById('refreshUnloggedIcon');
             const unloggedContainer = document.getElementById('unloggedWorkdaysContainer');
             if (icon) icon.textContent = '⏳';
             refreshUnloggedBtn.disabled = true;
 
-            // Keep existing DB data visible on screen while updating in background
             if (unloggedContainer) {
                 unloggedContainer.style.opacity = '0.6';
                 unloggedContainer.style.transition = 'opacity 0.2s ease';
             }
 
+            showBlockingSyncModal(`กำลังดึงข้อมูลสดย้อนหลัง ${rangeLabel} (${days} วัน)...`);
+
+            // 5-minute Timeout Controller (300,000 ms = 5 mins)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 300000);
+
             try {
-                // Trigger fast 30-day sync from OpenProject API
-                const data = await safeFetchJson('/api/openproject/time-entries/sync', { method: 'POST' });
+                const response = await fetch('/api/openproject/time-entries/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ days }),
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to sync time entries');
+                }
+
                 await loadUserStats();
                 if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
                 
+                closeSyncModal();
                 if (typeof Swal !== 'undefined') {
                     Swal.fire({
                         icon: 'success',
                         title: 'ดึงข้อมูลสดสำเร็จ',
-                        text: `อัปเดตรายการเวลาล่าสุดเรียบร้อยแล้ว (${data.count || 0} รายการ)`,
-                        timer: 1800,
+                        text: `อัปเดตรายการเวลาช่วง ${rangeLabel} เรียบร้อยแล้ว (${data.count || 0} รายการ)`,
+                        timer: 2000,
                         showConfirmButton: false,
                         toast: true,
                         position: 'top-end'
                     });
                 }
             } catch (e) {
+                clearTimeout(timeoutId);
+                closeSyncModal();
                 console.error('[refreshUnloggedBtn]', e);
-                const msg = e.message || 'ไม่สามารถดึงข้อมูลสดได้';
-                if (typeof Swal !== 'undefined') Swal.fire('Notice', msg, 'info');
+                const isTimeout = e.name === 'AbortError';
+                const msg = isTimeout ? 'การซิงค์ข้อมูลใช้เวลานานเกิน 5 นาที (Timeout)' : (e.message || 'ไม่สามารถดึงข้อมูลสดได้');
+                if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, isTimeout ? 'error' : 'info');
                 await loadUserStats();
             } finally {
                 if (icon) icon.textContent = '🔄';
