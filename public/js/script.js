@@ -549,37 +549,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     };
 
-    const syncTimeBtn = document.getElementById('syncTimeEntriesBtn');
-    if (syncTimeBtn) {
-        syncTimeBtn.addEventListener('click', async () => {
-            const icon = document.getElementById('syncTimeEntriesIcon');
-            if (icon) icon.textContent = '⏳';
-            syncTimeBtn.disabled = true;
-
-            try {
-                const data = await safeFetchJson('/api/openproject/time-entries/sync', { method: 'POST' });
-                if (data && data.ok) {
-                    if (typeof showToast === 'function') {
-                        showToast(`ดึงข้อมูลเวลาจริงจาก OpenProject สำเร็จ (${data.count} รายการ)`, 'success');
-                    } else if (typeof Swal !== 'undefined') {
-                        Swal.fire({ icon: 'success', title: 'Sync Success', text: `ดึงข้อมูลเวลาจริงสำเร็จ (${data.count} รายการ)` });
-                    }
-                    await loadUserStats();
-                } else {
-                    const msg = (data && data.error) || 'Failed to sync time entries';
-                    if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, 'warning');
-                    else if (typeof showToast === 'function') showToast(msg, 'error');
-                }
-            } catch (e) {
-                const msg = e.message || 'Error syncing time entries';
-                if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, 'warning');
-                else if (typeof showToast === 'function') showToast(msg, 'error');
-            } finally {
-                if (icon) icon.textContent = '🔄';
-            }
-        });
-    }
-
     // --- Blocking Sync Modal & Timeout Handler ---
     let activeSyncPollInterval = null;
 
@@ -616,6 +585,67 @@ document.addEventListener('DOMContentLoaded', async () => {
             Swal.close();
         }
     };
+
+    const syncTimeBtn = document.getElementById('syncTimeEntriesBtn');
+    if (syncTimeBtn) {
+        syncTimeBtn.addEventListener('click', async () => {
+            const rangeSelect = document.getElementById('unloggedSyncRangeSelect');
+            const days = rangeSelect ? parseInt(rangeSelect.value || 90) : 90;
+            const rangeLabel = rangeSelect ? rangeSelect.options[rangeSelect.selectedIndex].text : '3 เดือน';
+
+            const icon = document.getElementById('syncTimeEntriesIcon');
+            if (icon) icon.textContent = '⏳';
+            syncTimeBtn.disabled = true;
+
+            showBlockingSyncModal(`กำลังดึงข้อมูลเวลาจริงย้อนหลัง ${rangeLabel} จาก OpenProject API...`);
+
+            // 5-minute Timeout Controller (300,000 ms)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 300000);
+
+            try {
+                const response = await fetch('/api/openproject/time-entries/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ days }),
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to sync time entries');
+                }
+
+                await loadUserStats();
+                if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
+
+                closeSyncModal();
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'ดึงข้อมูลสดสำเร็จ',
+                        text: `อัปเดตข้อมูลเวลาจริงเรียบร้อยแล้ว (${data.count || 0} รายการ)`,
+                        timer: 2000,
+                        showConfirmButton: false,
+                        toast: true,
+                        position: 'top-end'
+                    });
+                }
+            } catch (e) {
+                clearTimeout(timeoutId);
+                closeSyncModal();
+                console.error('[syncTimeEntriesBtn]', e);
+                const isTimeout = e.name === 'AbortError';
+                const msg = isTimeout ? 'การซิงค์ข้อมูลใช้เวลานานเกิน 5 นาที (Timeout)' : (e.message || 'ไม่สามารถดึงข้อมูลสดได้');
+                if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, isTimeout ? 'error' : 'info');
+                await loadUserStats();
+            } finally {
+                if (icon) icon.textContent = '🔄';
+                syncTimeBtn.disabled = false;
+            }
+        });
+    }
 
     // Check on page load if server sync is currently active (handles browser refresh/reload lock)
     const checkActiveSyncOnPageLoad = async () => {
