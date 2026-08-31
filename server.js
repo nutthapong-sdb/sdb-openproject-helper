@@ -1433,6 +1433,16 @@ db.serialize(() => {
         created_by TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    // Workday Statuses Cache Table (Caches 'completed', 'missing', 'excluded' per user per workday)
+    db.run(`CREATE TABLE IF NOT EXISTS user_workday_statuses (
+        user_id TEXT NOT NULL,
+        workdate TEXT NOT NULL,
+        logged_hours REAL DEFAULT 0,
+        status TEXT NOT NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, workdate)
+    )`);
 });
 
 app.get('/api/wfh/defaults', (req, res) => {
@@ -2686,37 +2696,87 @@ async function calculateUserMissingWorkdays(assigneeId, userName, startDateStr, 
         return { missingCount: 0, totalMissingHours: 0, missingDays: [] };
     }
 
-    const loggedByDate = await new Promise(resolve => {
-        const placeholders = workdays.map(() => '?').join(',');
-        const query = `
-            SELECT spent_on, SUM(hours) as day_hours
-            FROM (
-                SELECT spent_on, hours
-                FROM openproject_time_entries
-                WHERE (user_id = ? OR LOWER(TRIM(user_name)) = LOWER(TRIM(?)))
-
-                UNION ALL
-
-                SELECT COALESCE(NULLIF(start_date, ''), DATE(created_at)) as spent_on, CAST(spent_hours AS REAL) as hours
-                FROM task_history
-                WHERE (user_id = ? OR user_id = ?)
-            )
-            WHERE spent_on IN (${placeholders})
-            GROUP BY spent_on
-        `;
-        const params = [
-            String(assigneeId), (userName || '').trim(),
-            String(assigneeId), String(userName || '').trim(),
-            ...workdays.map(w => w.date)
-        ];
-        db.all(query, params, (err, rows) => {
+    // Query cached workday statuses for this user
+    const cachedStatuses = await new Promise(resolve => {
+        db.all("SELECT workdate, status, logged_hours FROM user_workday_statuses WHERE user_id = ?", [String(assigneeId)], (err, rows) => {
             const map = {};
-            (rows || []).forEach(r => {
-                if (r.spent_on) map[r.spent_on] = parseFloat(r.day_hours || 0);
-            });
+            (rows || []).forEach(r => map[r.workdate] = r);
             resolve(map);
         });
     });
+
+    // Determine which workdays still need live DB query (skip past workdays already marked 'completed')
+    const pendingWorkdays = workdays.filter(w => {
+        const cached = cachedStatuses[w.date];
+        // Past workdays marked 'completed' do not need re-querying
+        if (cached && cached.status === 'completed' && w.date !== todayStr) {
+            return false;
+        }
+        return true;
+    });
+
+    const loggedByDate = {};
+    workdays.forEach(w => {
+        const cached = cachedStatuses[w.date];
+        if (cached && cached.status === 'completed' && w.date !== todayStr) {
+            loggedByDate[w.date] = parseFloat(cached.logged_hours || 8.0);
+        }
+    });
+
+    if (pendingWorkdays.length > 0) {
+        const liveLogged = await new Promise(resolve => {
+            const placeholders = pendingWorkdays.map(() => '?').join(',');
+            const query = `
+                SELECT spent_on, SUM(hours) as day_hours
+                FROM (
+                    SELECT spent_on, hours
+                    FROM openproject_time_entries
+                    WHERE (user_id = ? OR LOWER(TRIM(user_name)) = LOWER(TRIM(?)))
+
+                    UNION ALL
+
+                    SELECT COALESCE(NULLIF(start_date, ''), DATE(created_at)) as spent_on, CAST(spent_hours AS REAL) as hours
+                    FROM task_history
+                    WHERE (user_id = ? OR user_id = ?)
+                )
+                WHERE spent_on IN (${placeholders})
+                GROUP BY spent_on
+            `;
+            const params = [
+                String(assigneeId), (userName || '').trim(),
+                String(assigneeId), String(userName || '').trim(),
+                ...pendingWorkdays.map(w => w.date)
+            ];
+            db.all(query, params, (err, rows) => {
+                const map = {};
+                (rows || []).forEach(r => {
+                    if (r.spent_on) map[r.spent_on] = parseFloat(r.day_hours || 0);
+                });
+                resolve(map);
+            });
+        });
+
+        // Merge live logged hours and update user_workday_statuses cache
+        db.serialize(() => {
+            const stmt = db.prepare(`
+                INSERT INTO user_workday_statuses (user_id, workdate, logged_hours, status, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id, workdate) DO UPDATE SET
+                    logged_hours = excluded.logged_hours,
+                    status = excluded.status,
+                    updated_at = CURRENT_TIMESTAMP
+            `);
+
+            pendingWorkdays.forEach(w => {
+                const logged = liveLogged[w.date] || 0;
+                loggedByDate[w.date] = logged;
+                const status = logged >= 8.0 ? 'completed' : 'missing';
+                stmt.run([String(assigneeId), w.date, logged, status]);
+            });
+
+            stmt.finalize();
+        });
+    }
 
     const missingDays = [];
     let totalMissingHours = 0;
@@ -3050,11 +3110,14 @@ app.post('/api/openproject/time-entries/clear-and-resync', async (req, res) => {
     // Run background clear and resync task asynchronously
     (async () => {
         try {
-            console.log('[ClearAndResync] Clearing local openproject_time_entries and ranking_cache database tables in background...');
+            console.log('[ClearAndResync] Clearing local openproject_time_entries, ranking_cache, and user_workday_statuses database tables in background...');
             await new Promise((resolve, reject) => {
                 db.run("DELETE FROM openproject_time_entries", [], err => {
                     if (err) return reject(err);
-                    db.run("DELETE FROM ranking_cache", [], err2 => err2 ? reject(err2) : resolve());
+                    db.run("DELETE FROM ranking_cache", [], err2 => {
+                        if (err2) return reject(err2);
+                        db.run("DELETE FROM user_workday_statuses", [], err3 => err3 ? reject(err3) : resolve());
+                    });
                 });
             });
 
