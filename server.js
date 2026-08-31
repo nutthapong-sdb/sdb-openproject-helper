@@ -2785,28 +2785,25 @@ async function recalculateAndCacheRanking() {
         SELECT 
             a.id as assignee_id,
             COALESCE(u.name, a.name) as name, 
-            COALESCE(daily_agg.total_work_hours, 0) as work_hours,
-            COALESCE(daily_agg.total_ot_hours, 0) as ot_hours,
-            COALESCE(t.total_op_hours, h.total_local_hours, 0) as total_hours,
-            COALESCE(t.op_task_count, h.local_task_count, 0) as task_count,
-            CASE WHEN t.total_op_hours IS NOT NULL THEN 'openproject_api' ELSE 'local_history' END as data_source
+            SUM(COALESCE(daily_agg.total_work_hours, 0)) as work_hours,
+            SUM(COALESCE(daily_agg.total_ot_hours, 0)) as ot_hours,
+            MAX(COALESCE(t.total_op_hours, h.total_local_hours, 0)) as total_hours,
+            MAX(COALESCE(t.op_task_count, h.local_task_count, 0)) as task_count,
+            CASE WHEN MAX(t.total_op_hours) IS NOT NULL THEN 'openproject_api' ELSE 'local_history' END as data_source
         FROM local_assignees a 
         LEFT JOIN users u ON (u.openproject_id = CAST(a.id AS TEXT) OR u.id = CAST(a.id AS TEXT))
         LEFT JOIN (
             SELECT 
                 user_id,
-                user_name,
                 SUM(hours) as total_op_hours,
                 COUNT(DISTINCT work_package_id) as op_task_count
             FROM openproject_time_entries t
             WHERE 1=1 ${opDateCond}
-            GROUP BY user_id, user_name
+            GROUP BY user_id
         ) t ON (
             t.user_id = CAST(a.id AS TEXT) 
             OR t.user_id = u.openproject_id 
             OR t.user_id = u.id 
-            OR (t.user_name IS NOT NULL AND LOWER(TRIM(t.user_name)) = LOWER(TRIM(a.name)))
-            OR (t.user_name IS NOT NULL AND LOWER(TRIM(t.user_name)) = LOWER(TRIM(u.name)))
         )
         LEFT JOIN (
             SELECT 
@@ -2820,40 +2817,37 @@ async function recalculateAndCacheRanking() {
         LEFT JOIN (
             SELECT 
                 user_key,
-                user_name_key,
                 SUM(CASE WHEN day_hours > 8.0 THEN 8.0 ELSE day_hours END) as total_work_hours,
                 SUM(CASE WHEN day_hours > 8.0 THEN day_hours - 8.0 ELSE 0.0 END) as total_ot_hours
             FROM (
                 SELECT 
-                    t.user_id as user_key,
-                    t.user_name as user_name_key,
+                    COALESCE(NULLIF(t.user_id, ''), t.user_name) as user_key,
                     t.spent_on,
                     SUM(t.hours) as day_hours
                 FROM openproject_time_entries t
                 WHERE 1=1 ${opDateCond}
-                GROUP BY t.user_id, t.user_name, t.spent_on
+                GROUP BY user_key, t.spent_on
 
                 UNION ALL
 
                 SELECT 
-                    h.user_id as user_key,
-                    '' as user_name_key,
+                    CAST(h.user_id AS TEXT) as user_key,
                     COALESCE(NULLIF(h.start_date, ''), DATE(h.created_at)) as spent_on,
                     SUM(CAST(h.spent_hours AS REAL)) as day_hours
                 FROM task_history h
                 WHERE 1=1 ${localDateCond}
-                GROUP BY h.user_id, spent_on
+                GROUP BY user_key, spent_on
             )
-            GROUP BY user_key, user_name_key
+            GROUP BY user_key
         ) daily_agg ON (
             daily_agg.user_key = CAST(a.id AS TEXT)
             OR daily_agg.user_key = u.openproject_id
             OR daily_agg.user_key = u.id
-            OR (daily_agg.user_name_key IS NOT NULL AND LOWER(TRIM(daily_agg.user_name_key)) = LOWER(TRIM(a.name)))
-            OR (daily_agg.user_name_key IS NOT NULL AND LOWER(TRIM(daily_agg.user_name_key)) = LOWER(TRIM(u.name)))
+            OR (LOWER(TRIM(daily_agg.user_key)) = LOWER(TRIM(a.name)))
+            OR (LOWER(TRIM(daily_agg.user_key)) = LOWER(TRIM(u.name)))
         )
         GROUP BY a.id, a.name, u.name
-        ORDER BY total_hours DESC, task_count DESC, COALESCE(u.name, a.name) ASC
+        ORDER BY total_hours DESC, work_hours DESC, task_count DESC, COALESCE(u.name, a.name) ASC
     `;
 
     const params = [...opParams, ...localParams, ...opParams, ...localParams];
@@ -2867,9 +2861,13 @@ async function recalculateAndCacheRanking() {
         let workH = typeof r.work_hours === 'number' ? r.work_hours : parseFloat(r.work_hours || 0);
         let otH = typeof r.ot_hours === 'number' ? r.ot_hours : parseFloat(r.ot_hours || 0);
 
-        if (workH === 0 && otH === 0 && rawTotal > 0) {
-            workH = rawTotal;
-            otH = 0;
+        if ((workH + otH) < rawTotal) {
+            if (workH === 0 && otH === 0) {
+                workH = rawTotal;
+                otH = 0;
+            } else {
+                workH += (rawTotal - (workH + otH));
+            }
         }
 
         r.total_hours = Math.round(rawTotal * 10) / 10;
