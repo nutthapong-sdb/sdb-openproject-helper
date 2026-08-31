@@ -3050,9 +3050,12 @@ app.post('/api/openproject/time-entries/clear-and-resync', async (req, res) => {
     // Run background clear and resync task asynchronously
     (async () => {
         try {
-            console.log('[ClearAndResync] Clearing local openproject_time_entries database table in background...');
+            console.log('[ClearAndResync] Clearing local openproject_time_entries and ranking_cache database tables in background...');
             await new Promise((resolve, reject) => {
-                db.run("DELETE FROM openproject_time_entries", [], err => err ? reject(err) : resolve());
+                db.run("DELETE FROM openproject_time_entries", [], err => {
+                    if (err) return reject(err);
+                    db.run("DELETE FROM ranking_cache", [], err2 => err2 ? reject(err2) : resolve());
+                });
             });
 
             console.log('[ClearAndResync] Triggering full forceAll sync from OpenProject API in background...');
