@@ -2388,12 +2388,17 @@ function parseIsoDuration(durationStr) {
     return Math.round(totalHours * 100) / 100;
 }
 
-// Active Sync State Tracking (for 5-minute timeout and persistent page-reload lock)
+// Active Sync State Tracking (for 5-minute timeout, progress tracking, and persistent page-reload lock)
 let activeSyncState = {
     active: false,
     startTime: null,
     userId: null,
-    days: 30
+    days: 30,
+    progressPages: 0,
+    totalPages: 0,
+    totalSynced: 0,
+    lastResult: null,
+    error: null
 };
 
 // Sync Time Entries directly from OpenProject API /api/v3/time_entries
@@ -2413,6 +2418,10 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
     else if (days <= 30) maxPagesToFetch = 3;
     else if (days <= 90) maxPagesToFetch = 6;
     else maxPagesToFetch = 10;
+
+    activeSyncState.totalPages = maxPagesToFetch;
+    activeSyncState.progressPages = 0;
+    activeSyncState.totalSynced = 0;
 
     console.log(`[TimeEntries] Syncing time entries from OpenProject API (forceAll: ${isForceAll}, range: past ${days} days, cutoff: ${cutoffStr}, max pages: ${maxPagesToFetch})...`);
 
@@ -2501,6 +2510,8 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
         const sortParam = JSON.stringify([['id', 'desc']]);
 
         while (pageNum <= maxPagesToFetch) {
+            activeSyncState.progressPages = pageNum;
+            activeSyncState.totalSynced = totalSynced;
             const url = `${HOST}/api/v3/time_entries?sortBy=${encodeURIComponent(sortParam)}&pageSize=${pageSize}&offset=${pageNum}`;
             console.log(`[TimeEntries] Fast-fetching page ${pageNum}/${maxPagesToFetch} with API Key ${workingKey.substring(0, 8)}...`);
 
@@ -2888,20 +2899,28 @@ async function recalculateAndCacheRanking() {
 // GET Active Sync Status
 app.get('/api/openproject/time-entries/sync-status', (req, res) => {
     if (!activeSyncState.active) {
-        return res.json({ active: false });
+        return res.json({
+            active: false,
+            lastResult: activeSyncState.lastResult,
+            error: activeSyncState.error
+        });
     }
     const durationMs = Date.now() - activeSyncState.startTime;
     // 5-minute timeout safety auto-reset
     if (durationMs > 300000) {
         activeSyncState.active = false;
         activeSyncState.startTime = null;
-        return res.json({ active: false, timedOut: true });
+        activeSyncState.error = "การซิงค์ข้อมูลใช้เวลานานเกิน 5 นาที (Timeout)";
+        return res.json({ active: false, timedOut: true, error: activeSyncState.error });
     }
     res.json({
         active: true,
         durationMs,
         userId: activeSyncState.userId,
-        days: activeSyncState.days
+        days: activeSyncState.days,
+        progressPages: activeSyncState.progressPages,
+        totalPages: activeSyncState.totalPages,
+        totalSynced: activeSyncState.totalSynced
     });
 });
 
@@ -2949,7 +2968,12 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
         active: true,
         startTime: Date.now(),
         userId: userId,
-        days: days
+        days: days,
+        progressPages: 0,
+        totalPages: 0,
+        totalSynced: 0,
+        lastResult: null,
+        error: null
     };
 
     try {
@@ -2965,21 +2989,24 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
             db.get("SELECT MAX(updated_at) as last_updated FROM ranking_cache", [], (err, row) => resolve(row));
         });
 
-        res.json({ 
+        activeSyncState.lastResult = {
             ...syncResult, 
             lastSync: lastSyncRow ? lastSyncRow.last_updated : null,
             canSyncToday: isAdmin
-        });
+        };
+
+        res.json(activeSyncState.lastResult);
     } catch (e) {
         console.error('Time entries sync error:', e);
-        res.status(500).json({ error: e.message || 'Sync failed' });
+        activeSyncState.error = e.message || 'Sync failed';
+        res.status(500).json({ error: activeSyncState.error });
     } finally {
         activeSyncState.active = false;
         activeSyncState.startTime = null;
     }
 });
 
-// POST Force Clear local DB and Resync All Time Entries from OpenProject API (Admin only)
+// POST Force Clear local DB and Resync All Time Entries from OpenProject API (Admin only, non-blocking async)
 app.post('/api/openproject/time-entries/clear-and-resync', async (req, res) => {
     const userApiKey = req.cookies.user_apikey;
     if (!userApiKey) {
@@ -3004,44 +3031,60 @@ app.post('/api/openproject/time-entries/clear-and-resync', async (req, res) => {
         });
     }
 
+    // Initialize activeSyncState for non-blocking background processing
     activeSyncState = {
         active: true,
         startTime: Date.now(),
         userId: userId,
-        days: 9999
+        days: 9999,
+        progressPages: 0,
+        totalPages: 45,
+        totalSynced: 0,
+        lastResult: null,
+        error: null
     };
 
-    try {
-        console.log('[ClearAndResync] Clearing local openproject_time_entries database table...');
-        await new Promise((resolve, reject) => {
-            db.run("DELETE FROM openproject_time_entries", [], err => err ? reject(err) : resolve());
-        });
+    // Return immediate HTTP 200 response to prevent Cloudflare 524 timeouts!
+    res.json({
+        ok: true,
+        active: true,
+        message: "เริ่มต้นการเคลียร์และดึงข้อมูลใหม่เบื้องหลังเรียบร้อยแล้ว"
+    });
 
-        console.log('[ClearAndResync] Triggering full forceAll sync from OpenProject API...');
-        const syncResult = await syncOpenProjectTimeEntries(userApiKey, { forceAll: true });
+    // Run background clear and resync task asynchronously
+    (async () => {
+        try {
+            console.log('[ClearAndResync] Clearing local openproject_time_entries database table in background...');
+            await new Promise((resolve, reject) => {
+                db.run("DELETE FROM openproject_time_entries", [], err => err ? reject(err) : resolve());
+            });
 
-        console.log('[ClearAndResync] Recalculating and caching ranking stats...');
-        await recalculateAndCacheRanking();
+            console.log('[ClearAndResync] Triggering full forceAll sync from OpenProject API in background...');
+            const syncResult = await syncOpenProjectTimeEntries(userApiKey, { forceAll: true });
 
-        db.run("INSERT INTO user_sync_logs (user_id, sync_date) VALUES (?, ?)", [userId, todayStr]);
+            console.log('[ClearAndResync] Recalculating and caching ranking stats...');
+            await recalculateAndCacheRanking();
 
-        const lastSyncRow = await new Promise(resolve => {
-            db.get("SELECT MAX(updated_at) as last_updated FROM ranking_cache", [], (err, row) => resolve(row));
-        });
+            db.run("INSERT INTO user_sync_logs (user_id, sync_date) VALUES (?, ?)", [userId, todayStr]);
 
-        res.json({
-            ...syncResult,
-            cleared: true,
-            lastSync: lastSyncRow ? lastSyncRow.last_updated : null,
-            canSyncToday: true
-        });
-    } catch (e) {
-        console.error('Clear and resync time entries error:', e);
-        res.status(500).json({ error: e.message || 'Clear and resync failed' });
-    } finally {
-        activeSyncState.active = false;
-        activeSyncState.startTime = null;
-    }
+            const lastSyncRow = await new Promise(resolve => {
+                db.get("SELECT MAX(updated_at) as last_updated FROM ranking_cache", [], (err, row) => resolve(row));
+            });
+
+            activeSyncState.lastResult = {
+                ...syncResult,
+                cleared: true,
+                lastSync: lastSyncRow ? lastSyncRow.last_updated : null,
+                canSyncToday: true
+            };
+            console.log('[ClearAndResync] Background clear and resync completed successfully!', activeSyncState.lastResult);
+        } catch (e) {
+            console.error('[ClearAndResync Background Error]:', e);
+            activeSyncState.error = e.message || 'Background clear and resync failed';
+        } finally {
+            activeSyncState.active = false;
+        }
+    })();
 });
 
 // GET User Stats for Dashboard (Strictly loaded from ranking_cache table without auto-sync)

@@ -647,6 +647,40 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    const pollSyncUntilComplete = () => {
+        return new Promise((resolve, reject) => {
+            if (activeSyncPollInterval) clearInterval(activeSyncPollInterval);
+
+            activeSyncPollInterval = setInterval(async () => {
+                try {
+                    const check = await safeFetchJson('/api/openproject/time-entries/sync-status');
+                    if (!check) return;
+
+                    if (check.active && check.durationMs < 300000) {
+                        // Update live progress in SweetAlert modal if visible
+                        if (typeof Swal !== 'undefined' && Swal.isVisible()) {
+                            const modalHtmlContainer = Swal.getHtmlContainer ? Swal.getHtmlContainer() : null;
+                            if (modalHtmlContainer) {
+                                const pageText = check.progressPages > 0 ? ` (หน้า ${check.progressPages}/${check.totalPages || 45}, ดึงแล้ว ${(check.totalSynced || 0).toLocaleString()} รายการ)` : '';
+                                modalHtmlContainer.innerHTML = `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">กำลังดึงข้อมูลชั่วโมงทำงานจาก OpenProject API...</p><span style="font-size: 0.85rem; color: #ffca28;">${pageText}</span>`;
+                            }
+                        }
+                    } else {
+                        clearInterval(activeSyncPollInterval);
+                        activeSyncPollInterval = null;
+                        if (check.error) {
+                            reject(new Error(check.error));
+                        } else {
+                            resolve(check.lastResult || {});
+                        }
+                    }
+                } catch (e) {
+                    console.error('[pollSyncStatus]', e);
+                }
+            }, 1500);
+        });
+    };
+
     const clearResyncBtn = document.getElementById('clearResyncTimeBtn');
     if (clearResyncBtn) {
         clearResyncBtn.addEventListener('click', async () => {
@@ -668,17 +702,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             showBlockingSyncModal('กำลังเคลียร์ฐานข้อมูลเดิม และดึงข้อมูลชั่วโมงทำงานทั้งหมดใหม่จาก OpenProject API...');
 
-            // 5-minute Timeout Controller (300,000 ms)
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 300000);
-
             try {
-                const data = await safeFetchJson('/api/openproject/time-entries/clear-and-resync', {
+                // 1. Trigger background clear and resync (returns in 100ms, zero Cloudflare 524 timeouts!)
+                await safeFetchJson('/api/openproject/time-entries/clear-and-resync', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    signal: controller.signal
+                    headers: { 'Content-Type': 'application/json' }
                 });
-                clearTimeout(timeoutId);
+
+                // 2. Poll background progress live
+                const data = await pollSyncUntilComplete();
 
                 await loadUserStats();
                 if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
@@ -688,7 +720,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     await Swal.fire({
                         icon: 'success',
                         title: 'เคลียร์และดึงข้อมูลใหม่สำเร็จ',
-                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">ล้างฐานข้อมูลเดิมและดึงข้อมูลชั่วโมงทำงานทั้งหมดจาก OpenProject API เรียบร้อยแล้ว (${data.count || 0} รายการ)</p>`,
+                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">ล้างฐานข้อมูลเดิมและดึงข้อมูลชั่วโมงทำงานทั้งหมดจาก OpenProject API เรียบร้อยแล้ว (${(data && data.count) ? data.count.toLocaleString() : 0} รายการ)</p>`,
                         showConfirmButton: true,
                         confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
                         confirmButtonColor: '#00897b',
@@ -697,12 +729,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     });
                 }
             } catch (e) {
-                clearTimeout(timeoutId);
                 closeSyncModal();
                 console.error('[clearResyncBtn]', e);
-                const isTimeout = e.name === 'AbortError';
-                const msg = isTimeout ? 'การซิงค์ข้อมูลใช้เวลานานเกิน 5 นาที (Timeout)' : (e.message || 'ไม่สามารถเคลียร์และดึงข้อมูลสดได้');
-                if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, isTimeout ? 'error' : 'info');
+                const msg = e.message || 'ไม่สามารถเคลียร์และดึงข้อมูลสดได้';
+                if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, 'error');
                 await loadUserStats();
             } finally {
                 if (icon) icon.textContent = '🗑️';
@@ -717,27 +747,22 @@ document.addEventListener('DOMContentLoaded', async () => {
             const status = await safeFetchJson('/api/openproject/time-entries/sync-status');
             if (status && status.active && status.durationMs < 300000) {
                 showBlockingSyncModal('พบกระบวนการซิงค์ข้อมูลค้างอยู่ ระบบกำลังล็อกหน้าและรอดึงข้อมูลจนเสร็จ...');
-                
-                activeSyncPollInterval = setInterval(async () => {
-                    const check = await safeFetchJson('/api/openproject/time-entries/sync-status');
-                    if (!check || !check.active || check.durationMs >= 300000) {
-                        closeSyncModal();
-                        await loadUserStats();
-                        if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
-                        if (typeof Swal !== 'undefined') {
-                            await Swal.fire({
-                                icon: 'success',
-                                title: 'อัปเดตข้อมูลสำเร็จ',
-                                html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">ระบบดึงข้อมูลสดจาก OpenProject เรียบร้อยแล้ว</p>`,
-                                showConfirmButton: true,
-                                confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
-                                confirmButtonColor: '#00897b',
-                                allowOutsideClick: false,
-                                allowEscapeKey: false
-                            });
-                        }
-                    }
-                }, 2000);
+                const data = await pollSyncUntilComplete();
+                closeSyncModal();
+                await loadUserStats();
+                if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
+                if (typeof Swal !== 'undefined') {
+                    await Swal.fire({
+                        icon: 'success',
+                        title: 'อัปเดตข้อมูลสำเร็จ',
+                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">ระบบดึงข้อมูลสดจาก OpenProject เรียบร้อยแล้ว (${(data && data.count) ? data.count.toLocaleString() : ''} รายการ)</p>`,
+                        showConfirmButton: true,
+                        confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
+                        confirmButtonColor: '#00897b',
+                        allowOutsideClick: false,
+                        allowEscapeKey: false
+                    });
+                }
             }
         } catch (e) {
             console.error('[checkActiveSyncOnPageLoad]', e);
