@@ -2843,11 +2843,8 @@ async function recalculateAndCacheRanking() {
             daily_agg.user_key = CAST(a.id AS TEXT)
             OR daily_agg.user_key = u.openproject_id
             OR daily_agg.user_key = u.id
-            OR (LOWER(TRIM(daily_agg.user_key)) = LOWER(TRIM(a.name)))
-            OR (LOWER(TRIM(daily_agg.user_key)) = LOWER(TRIM(u.name)))
         )
         GROUP BY a.id, a.name, u.name
-        ORDER BY total_hours DESC, work_hours DESC, task_count DESC, COALESCE(u.name, a.name) ASC
     `;
 
     const params = [...opParams, ...localParams, ...opParams, ...localParams];
@@ -2857,25 +2854,18 @@ async function recalculateAndCacheRanking() {
     });
 
     for (const r of rows) {
-        const rawTotal = typeof r.total_hours === 'number' ? r.total_hours : parseFloat(r.total_hours || 0);
         let workH = typeof r.work_hours === 'number' ? r.work_hours : parseFloat(r.work_hours || 0);
         let otH = typeof r.ot_hours === 'number' ? r.ot_hours : parseFloat(r.ot_hours || 0);
 
-        if ((workH + otH) < rawTotal) {
-            if (workH === 0 && otH === 0) {
-                workH = rawTotal;
-                otH = 0;
-            } else {
-                workH += (rawTotal - (workH + otH));
-            }
-        }
-
-        r.total_hours = Math.round(rawTotal * 10) / 10;
         r.work_hours = Math.round(workH * 10) / 10;
         r.ot_hours = Math.round(otH * 10) / 10;
+        r.total_hours = Math.round((r.work_hours + r.ot_hours) * 10) / 10;
 
         r.missing_info = await calculateUserMissingWorkdays(r.assignee_id, r.name, activeStartDate, activeEndDate);
     }
+
+    // Always sort strictly by total_hours DESC, work_hours DESC, task_count DESC
+    rows.sort((a, b) => b.total_hours - a.total_hours || b.work_hours - a.work_hours || b.task_count - a.task_count);
 
     await new Promise((resolve, reject) => {
         db.serialize(() => {
