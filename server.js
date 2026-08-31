@@ -2335,17 +2335,42 @@ app.post('/api/sync-users', async (req, res) => {
 });
 
 // Sync Projects Endpoint (Manual Trigger)
-app.post('/api/sync-projects', async (req, res) => {
+const syncProjectsState = { active: false, lastResult: null, error: null };
+
+app.post('/api/sync-projects', (req, res) => {
     const userApiKey = req.cookies.user_apikey;
     if (!userApiKey) return res.status(401).json({ error: 'Not authenticated' });
 
-    try {
-        const count = await syncAllProjects(userApiKey);
-        res.json({ message: 'Project synchronization started.', count: count || 0 });
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: e.message });
+    if (syncProjectsState.active) {
+        return res.json({ ok: true, active: true, message: 'กำลัง sync projects อยู่แล้ว...' });
     }
+
+    syncProjectsState.active = true;
+    syncProjectsState.lastResult = null;
+    syncProjectsState.error = null;
+
+    res.json({ ok: true, active: true, message: 'เริ่ม sync projects เบื้องหลังแล้ว' });
+
+    (async () => {
+        try {
+            const count = await syncAllProjects(userApiKey);
+            syncProjectsState.lastResult = { count: count || 0 };
+        } catch (e) {
+            console.error('[SyncProjects] Error:', e.message);
+            syncProjectsState.error = e.message;
+        } finally {
+            syncProjectsState.active = false;
+        }
+    })();
+});
+
+app.get('/api/sync-projects/status', (req, res) => {
+    if (!req.cookies.user_apikey) return res.status(401).json({ error: 'Not authenticated' });
+    res.json({
+        active: syncProjectsState.active,
+        lastResult: syncProjectsState.lastResult,
+        error: syncProjectsState.error
+    });
 });
 
 function getRankingSettings() {

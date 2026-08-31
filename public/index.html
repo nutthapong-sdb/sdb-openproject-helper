@@ -93,9 +93,6 @@
                         <button id="syncUsersBtn"
                             style="background: transparent; border: none; color: #eee; width: 100%; text-align: left; padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 0.9rem;">Sync
                             Users</button>
-                        <button id="syncProjectsBtn"
-                            style="background: transparent; border: none; color: #eee; width: 100%; text-align: left; padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 0.9rem;">Sync
-                            Projects</button>
                         <hr style="border: none; border-top: 1px solid #444; margin: 5px 0;">
                         <button id="adminPanelBtn"
                             style="background: transparent; border: none; color: #eee; width: 100%; text-align: left; padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 0.9rem; font-weight: 600;">Admin
@@ -126,7 +123,7 @@
                     <main>
                         <form id="createTaskForm">
                             <!-- Row 1: Project + Task Type -->
-                            <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+                            <div style="display: flex; gap: 15px; margin-bottom: 8px;">
                                 <div class="form-group" style="flex: 1; margin-bottom: 0;">
                                     <label for="projectId">Project</label>
                                     <select id="projectId" style="width: 100%;" required>
@@ -139,6 +136,12 @@
                                         <option value="" disabled selected>Select a Project first</option>
                                     </select>
                                 </div>
+                            </div>
+                            <div style="margin-bottom: 20px; text-align: right;">
+                                <button type="button" id="syncProjectsBtn"
+                                    style="background: transparent; border: 1px solid #444; color: #aaa; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.78rem;">
+                                    🔄 Sync Projects
+                                </button>
                             </div>
 
                             <div class="form-group">

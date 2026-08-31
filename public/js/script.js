@@ -1151,42 +1151,49 @@ document.addEventListener('DOMContentLoaded', async () => {
     const syncProjectsBtn = document.getElementById('syncProjectsBtn');
     if (syncProjectsBtn) {
         syncProjectsBtn.addEventListener('click', async (e) => {
-            console.log('Sync Projects Clicked'); // Debug
-            const originalText = syncProjectsBtn.innerText;
-            syncProjectsBtn.innerText = 'Syncing...';
+            const originalText = syncProjectsBtn.innerHTML;
+            syncProjectsBtn.innerHTML = '⏳ กำลัง sync...';
             syncProjectsBtn.disabled = true;
             syncProjectsBtn.style.cursor = 'wait';
 
             try {
                 const response = await fetch('/api/sync-projects', { method: 'POST' });
-                const result = await response.json();
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    throw new Error(err.error || 'Request failed');
+                }
 
-                if (response.ok) {
-                    await Swal.fire({
-                        icon: 'success',
-                        title: 'Sync Complete',
-                        text: `Synchronized ${result.count} projects successfully.`,
-                        showConfirmButton: true,
-                        confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
-                        confirmButtonColor: '#00897b',
-                        allowOutsideClick: false,
-                        allowEscapeKey: false
-                    });
-
-                    // Reload after user closes the popup
-                    location.reload();
-                } else {
-                    throw new Error(result.error);
+                // Poll until done
+                let done = false;
+                while (!done) {
+                    await new Promise(r => setTimeout(r, 2000));
+                    const statusRes = await fetch('/api/sync-projects/status');
+                    const status = await statusRes.json();
+                    if (!status.active) {
+                        done = true;
+                        if (status.error) throw new Error(status.error);
+                        await Swal.fire({
+                            icon: 'success',
+                            title: 'Sync Projects สำเร็จ',
+                            text: `ซิงค์ ${status.lastResult?.count || 0} โปรเจคเรียบร้อยแล้ว`,
+                            showConfirmButton: true,
+                            confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
+                            confirmButtonColor: '#00897b',
+                            allowOutsideClick: false,
+                            allowEscapeKey: false
+                        });
+                        location.reload();
+                    }
                 }
             } catch (error) {
-                console.error('Sync failed:', error);
+                console.error('Sync projects failed:', error);
                 Swal.fire({
                     icon: 'error',
-                    title: 'Sync Failed',
+                    title: 'Sync Projects ล้มเหลว',
                     text: error.message || 'Could not sync projects.'
                 });
             } finally {
-                syncProjectsBtn.innerText = originalText;
+                syncProjectsBtn.innerHTML = originalText;
                 syncProjectsBtn.disabled = false;
                 syncProjectsBtn.style.cursor = 'pointer';
             }
