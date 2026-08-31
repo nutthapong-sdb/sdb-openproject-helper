@@ -2976,34 +2976,42 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
         error: null
     };
 
-    try {
-        const syncResult = await syncOpenProjectTimeEntries(userApiKey, { days });
-        
-        // Recalculate and update ranking cache in DB
-        await recalculateAndCacheRanking();
+    // Return immediate HTTP 200 response to prevent Cloudflare 524 timeouts!
+    res.json({
+        ok: true,
+        active: true,
+        message: "เริ่มต้นการดึงข้อมูลสดเบื้องหลังเรียบร้อยแล้ว"
+    });
 
-        // Record user sync execution
-        db.run("INSERT INTO user_sync_logs (user_id, sync_date) VALUES (?, ?)", [userId, todayStr]);
+    // Run background sync task asynchronously
+    (async () => {
+        try {
+            console.log(`[TimeEntriesSync] Running background sync for past ${days} days...`);
+            const syncResult = await syncOpenProjectTimeEntries(userApiKey, { days });
+            
+            // Recalculate and update ranking cache in DB
+            await recalculateAndCacheRanking();
 
-        const lastSyncRow = await new Promise(resolve => {
-            db.get("SELECT MAX(updated_at) as last_updated FROM ranking_cache", [], (err, row) => resolve(row));
-        });
+            // Record user sync execution
+            db.run("INSERT INTO user_sync_logs (user_id, sync_date) VALUES (?, ?)", [userId, todayStr]);
 
-        activeSyncState.lastResult = {
-            ...syncResult, 
-            lastSync: lastSyncRow ? lastSyncRow.last_updated : null,
-            canSyncToday: isAdmin
-        };
+            const lastSyncRow = await new Promise(resolve => {
+                db.get("SELECT MAX(updated_at) as last_updated FROM ranking_cache", [], (err, row) => resolve(row));
+            });
 
-        res.json(activeSyncState.lastResult);
-    } catch (e) {
-        console.error('Time entries sync error:', e);
-        activeSyncState.error = e.message || 'Sync failed';
-        res.status(500).json({ error: activeSyncState.error });
-    } finally {
-        activeSyncState.active = false;
-        activeSyncState.startTime = null;
-    }
+            activeSyncState.lastResult = {
+                ...syncResult,
+                lastSync: lastSyncRow ? lastSyncRow.last_updated : null,
+                canSyncToday: isAdmin
+            };
+            console.log('[TimeEntriesSync] Background sync completed successfully!', activeSyncState.lastResult);
+        } catch (e) {
+            console.error('[TimeEntriesSync Background Error]:', e);
+            activeSyncState.error = e.message || 'Background sync failed';
+        } finally {
+            activeSyncState.active = false;
+        }
+    })();
 });
 
 // POST Force Clear local DB and Resync All Time Entries from OpenProject API (Admin only, non-blocking async)

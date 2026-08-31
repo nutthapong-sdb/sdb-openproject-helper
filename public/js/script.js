@@ -608,13 +608,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             const timeoutId = setTimeout(() => controller.abort(), 300000);
 
             try {
-                const data = await safeFetchJson('/api/openproject/time-entries/sync', {
+                // 1. Trigger background sync (returns in ~35ms, zero Cloudflare 524 timeouts!)
+                await safeFetchJson('/api/openproject/time-entries/sync', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ days }),
-                    signal: controller.signal
+                    body: JSON.stringify({ days })
                 });
-                clearTimeout(timeoutId);
+
+                // 2. Poll live background progress
+                const data = await pollSyncUntilComplete();
 
                 await loadUserStats();
                 if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
@@ -624,7 +626,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     await Swal.fire({
                         icon: 'success',
                         title: 'ดึงข้อมูลสดสำเร็จ',
-                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">อัปเดตข้อมูลเวลาจริงเรียบร้อยแล้ว (${data.count || 0} รายการ)</p>`,
+                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">อัปเดตข้อมูลเวลาจริงช่วง ${rangeLabel} เรียบร้อยแล้ว (${(data && data.count) ? data.count.toLocaleString() : 0} รายการ)</p>`,
                         showConfirmButton: true,
                         confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
                         confirmButtonColor: '#00897b',
@@ -633,12 +635,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     });
                 }
             } catch (e) {
-                clearTimeout(timeoutId);
                 closeSyncModal();
                 console.error('[syncTimeEntriesBtn]', e);
-                const isTimeout = e.name === 'AbortError';
-                const msg = isTimeout ? 'การซิงค์ข้อมูลใช้เวลานานเกิน 5 นาที (Timeout)' : (e.message || 'ไม่สามารถดึงข้อมูลสดได้');
-                if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, isTimeout ? 'error' : 'info');
+                const msg = e.message || 'ไม่สามารถดึงข้อมูลสดได้';
+                if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, 'error');
                 await loadUserStats();
             } finally {
                 if (icon) icon.textContent = '🔄';
@@ -661,7 +661,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         if (typeof Swal !== 'undefined' && Swal.isVisible()) {
                             const modalHtmlContainer = Swal.getHtmlContainer ? Swal.getHtmlContainer() : null;
                             if (modalHtmlContainer) {
-                                const pageText = check.progressPages > 0 ? ` (หน้า ${check.progressPages}/${check.totalPages || 45}, ดึงแล้ว ${(check.totalSynced || 0).toLocaleString()} รายการ)` : '';
+                                const pageText = check.progressPages > 0 ? ` (หน้า ${check.progressPages}/${check.totalPages || 10}, ดึงแล้ว ${(check.totalSynced || 0).toLocaleString()} รายการ)` : '';
                                 modalHtmlContainer.innerHTML = `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">กำลังดึงข้อมูลชั่วโมงทำงานจาก OpenProject API...</p><span style="font-size: 0.85rem; color: #ffca28;">${pageText}</span>`;
                             }
                         }
@@ -791,18 +791,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             showBlockingSyncModal(`กำลังดึงข้อมูลสดย้อนหลัง ${rangeLabel} (${days} วัน)...`);
 
-            // 5-minute Timeout Controller (300,000 ms = 5 mins)
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 300000);
-
             try {
-                const data = await safeFetchJson('/api/openproject/time-entries/sync', {
+                // 1. Trigger background sync (returns in ~35ms, zero Cloudflare 524 timeouts!)
+                await safeFetchJson('/api/openproject/time-entries/sync', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ days }),
-                    signal: controller.signal
+                    body: JSON.stringify({ days })
                 });
-                clearTimeout(timeoutId);
+
+                // 2. Poll live background progress
+                const data = await pollSyncUntilComplete();
 
                 await loadUserStats();
                 if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
@@ -812,7 +810,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     await Swal.fire({
                         icon: 'success',
                         title: 'ดึงข้อมูลสดสำเร็จ',
-                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">อัปเดตรายการเวลาช่วง ${rangeLabel} เรียบร้อยแล้ว (${data.count || 0} รายการ)</p>`,
+                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">อัปเดตรายการเวลาช่วง ${rangeLabel} เรียบร้อยแล้ว (${(data && data.count) ? data.count.toLocaleString() : 0} รายการ)</p>`,
                         showConfirmButton: true,
                         confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
                         confirmButtonColor: '#00897b',
@@ -821,12 +819,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     });
                 }
             } catch (e) {
-                clearTimeout(timeoutId);
                 closeSyncModal();
                 console.error('[refreshUnloggedBtn]', e);
-                const isTimeout = e.name === 'AbortError';
-                const msg = isTimeout ? 'การซิงค์ข้อมูลใช้เวลานานเกิน 5 นาที (Timeout)' : (e.message || 'ไม่สามารถดึงข้อมูลสดได้');
-                if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, isTimeout ? 'error' : 'info');
+                const msg = e.message || 'ไม่สามารถดึงข้อมูลสดได้';
+                if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, 'error');
                 await loadUserStats();
             } finally {
                 if (icon) icon.textContent = '🔄';
