@@ -803,9 +803,10 @@ app.post('/api/automation/debutservice/work-from-home/add', async (req, res) => 
 
         if (!dryRun) {
             tlog('click Save');
-            const submitBtn = page.getByRole('button', { name: /^save$/i })
+            const submitBtn = page.locator('#btnSaveForm')
+                .or(page.getByRole('button', { name: /^save$/i }))
                 .or(page.getByRole('button', { name: /submit|save|ส่ง|บันทึก/i }))
-                .or(page.locator('button[type="submit"], input[type="submit"]'))
+                .or(page.locator('button[type="submit"]:visible, input[type="submit"]:visible'))
                 .first();
             if ((await submitBtn.count().catch(() => 0)) > 0) {
                 await Promise.all([
@@ -832,9 +833,12 @@ app.post('/api/automation/debutservice/work-from-home/add', async (req, res) => 
             const approvalBtn = page.locator('#btnSubmitApproval').first();
             if ((await approvalBtn.count().catch(() => 0)) > 0) {
                 await approvalBtn.scrollIntoViewIfNeeded().catch(() => { });
-                await approvalBtn.click().catch(async () => {
-                    await approvalBtn.click({ force: true }).catch(() => { });
-                });
+                await Promise.all([
+                    page.waitForResponse((r) => r.url().includes('/v2/approval_workflows/approval'), { timeout: 30_000 }).catch(() => { }),
+                    approvalBtn.click().catch(async () => {
+                        await approvalBtn.click({ force: true }).catch(() => { });
+                    })
+                ]);
                 await page.waitForTimeout(800);
             } else {
                 tlog('Submit Approval button not found');
