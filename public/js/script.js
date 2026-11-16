@@ -283,6 +283,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let myAvatarId = null;
     let dailySyncLimit = 3;
+    let dailyFullSyncLimit = 1;
 
     // Load User Stats
     const loadUserStats = async () => {
@@ -326,6 +327,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             myAvatarId = data && data.myAvatar ? data.myAvatar : null;
             dailySyncLimit = data && data.dailySyncLimit ? data.dailySyncLimit : dailySyncLimit;
+            dailyFullSyncLimit = data && data.dailyFullSyncLimit ? data.dailyFullSyncLimit : dailyFullSyncLimit;
 
             const syncLabel = document.getElementById('rankingLastSyncLabel');
             if (syncLabel) {
@@ -541,7 +543,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             const syncBtn = document.getElementById('syncTimeEntriesBtn');
-            if (syncBtn) syncBtn.style.display = data && data.isAdmin ? 'inline-flex' : 'none';
+            if (syncBtn) {
+                syncBtn.title = data && data.canSyncAllToday === false && !data.isAdmin
+                    ? `คุณใช้สิทธิ์ Sync ครบ ${dailyFullSyncLimit} ครั้งของวันนี้แล้ว (กดได้อีกครั้งในวันพรุ่งนี้)`
+                    : `ดึงข้อมูลชั่วโมงของทุกคนด้วย API key ของแต่ละคน (พนักงานกดได้วันละ ${dailyFullSyncLimit} ครั้ง)`;
+            }
 
             const refreshBtn = document.getElementById('refreshUnloggedBtn');
             if (refreshBtn) {
@@ -1759,7 +1765,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    $('#openRankingSettingsBtn, #rankingDateRangeBadge').on('click', function() {
+    $('#rankingDateRangeBadge').on('click', function() {
         openAdminPanel();
     });
 

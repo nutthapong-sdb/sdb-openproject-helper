@@ -79,7 +79,7 @@ All tables are initialized in `server.js`:
 | `ranking_cache` | `assignee_id TEXT PRIMARY KEY` | Aggregated rankings (`assignee_id`, `name`, `work_hours`, `ot_hours`, `total_hours`, `task_count`, `missing_json`, `updated_at`). |
 | `user_workday_statuses` | `(user_id, workdate)` | Workday completion cache (`user_id`, `workdate`, `logged_hours`, `status` ['completed' \| 'missing' \| 'excluded'], `updated_at`). |
 | `excluded_workdays` | `excluded_date TEXT UNIQUE` | Company holidays and excluded dates (`excluded_date`, `reason`, `created_by`, `created_at`). |
-| `user_sync_logs` | `id INTEGER PRIMARY KEY` | Rate limiting log for ranking sync (`user_id`, `sync_date`, `synced_at`). 3 syncs/day for non-admins (`DAILY_SYNC_LIMIT`). |
+| `user_sync_logs` | `id INTEGER PRIMARY KEY` | Rate limiting log for ranking sync (`user_id`, `sync_date`, `synced_at`). `scope` is `'all'` (1/day for non-admins) or `'self'` (3/day). |
 | `wfh_form_defaults` | `user_id TEXT PRIMARY KEY` | Stored JSON defaults for WFH form per user. |
 | `wfh_remote_requests` | `id INTEGER PRIMARY KEY` | Log of submitted remote work requests. |
 | `meta` | `key TEXT PRIMARY KEY` | Key-value settings (`ranking_start_date`, `ranking_end_date`, `ranking_date_mode`, `last_sync`). |
@@ -114,7 +114,7 @@ All tables are initialized in `server.js`:
   - Completed days are upserted into `user_workday_statuses` with `status = 'completed'`, preventing previously logged days from erroneously reappearing as missing.
 - When an admin calls `POST /api/openproject/time-entries/clear-and-resync` (no UI button), `user_workday_statuses` is purged alongside `openproject_time_entries` and `ranking_cache`.
 
-- The Refresh button (`scope: 'self'`) fetches only the caller's own entries with their own `api_key`, limited to 3 per day for non-admins; the prune is scoped to that user.
+- `Sync OpenProject Time` (`scope: 'all'`) syncs every registered user's own entries with their own `api_key`; non-admins may press it 1 time per day (`DAILY_FULL_SYNC_LIMIT`). The Refresh button (`scope: 'self'`) fetches only the caller's own entries with their own `api_key`, 3 per day for non-admins (`DAILY_SYNC_LIMIT`), and its prune is scoped to that user. Quotas are counted separately per `user_sync_logs.scope`.
 
 - **Nightly sync**: at every midnight (`SYNC_TIMEZONE`) the server runs `runNightlySync()`, which re-syncs the last 26 hours (`NIGHTLY_SYNC_HOURS`) for everyone using each registered user's own `api_key`, then rebuilds `ranking_cache`. It skips if another sync is running and does not catch up after downtime.
 
@@ -130,8 +130,7 @@ All tables are initialized in `server.js`:
   - Reset Ranking button (`#resetRankingBtn`).
   - Editing Ranking Date Range filters and preset chips.
   - Adding/removing excluded workdays (`/api/openproject/excluded-workdays`).
-  - `Sync OpenProject Time` button (`scope: 'all'`): hidden for non-admins and rejected with 403 by the API; it syncs every registered user's own entries with their own `api_key`.
-  - Unlimited ranking sync operations (regular users are rate-limited to 3 syncs per calendar day via `user_sync_logs`).
+  - Unlimited ranking sync operations (regular users are rate-limited per calendar day via `user_sync_logs`: 1 full sync, 3 refreshes).
 
 ---
 

@@ -1429,6 +1429,11 @@ db.serialize(() => {
         sync_date TEXT NOT NULL,
         synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+    db.all("PRAGMA table_info(user_sync_logs)", (err, columns) => {
+        if (!err && columns && !columns.some(c => c.name === 'scope')) {
+            db.run("ALTER TABLE user_sync_logs ADD COLUMN scope TEXT DEFAULT 'self'");
+        }
+    });
 
     // Excluded Workdays Table (Holidays / Special Exclusions)
     db.run(`CREATE TABLE IF NOT EXISTS excluded_workdays (
@@ -2448,6 +2453,7 @@ function parseIsoDuration(durationStr) {
 }
 
 const DAILY_SYNC_LIMIT = 3;
+const DAILY_FULL_SYNC_LIMIT = 1;
 const MIN_SYNC_DATE = '2026-01-01';
 const NIGHTLY_SYNC_HOURS = 26;
 const SYNC_TIMEZONE = process.env.SYNC_TIMEZONE || 'Asia/Bangkok';
@@ -3027,6 +3033,14 @@ async function recalculateAndCacheRanking() {
     return rows;
 }
 
+function countSyncsToday(userId, todayStr, scope) {
+    return new Promise(resolve => {
+        db.get("SELECT COUNT(*) as cnt FROM user_sync_logs WHERE user_id = ? AND sync_date = ? AND scope = ?", [userId, todayStr, scope], (err, r) => {
+            resolve(r ? r.cnt : 0);
+        });
+    });
+}
+
 // Midnight job: refreshes the last NIGHTLY_SYNC_HOURS of everyone's hours so nobody has to press Sync OpenProject Time.
 async function runNightlySync() {
     if (activeSyncState.active && (Date.now() - activeSyncState.startTime) < 300000) {
@@ -3103,9 +3117,9 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
     const days = parseInt(req.body?.days || req.query?.days || 30);
     const scope = (req.body?.scope || req.query?.scope) === 'all' ? 'all' : 'self';
 
-    // Syncing everyone with everyone's own key is admin-only; anyone else refreshes their own entries.
-    if (scope === 'all' && !isAdmin) {
-        return res.status(403).json({ error: "สิทธิ์ไม่ถูกต้อง: เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่ Sync ข้อมูลของทุกคนได้" });
+    // 'all' syncs everyone with everyone's own key (Sync OpenProject Time); 'self' refreshes the caller's own entries.
+    if (scope === 'all' && !user) {
+        return res.status(403).json({ error: "ไม่พบบัญชีผู้ใช้ของคุณในระบบ จึง Sync ข้อมูลของทุกคนไม่ได้" });
     }
     if (scope === 'self' && !(user && user.openproject_id)) {
         return res.status(400).json({ error: "บัญชีของคุณยังไม่ได้ผูก OpenProject ID จึงดึงข้อมูลของตัวเองไม่ได้" });
@@ -3120,17 +3134,16 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
         });
     }
 
-    // Standard user rate limit: DAILY_SYNC_LIMIT syncs per day
+    // Standard user rate limits per day: DAILY_FULL_SYNC_LIMIT for Sync OpenProject Time, DAILY_SYNC_LIMIT for Refresh
     if (!isAdmin && user) {
-        const syncCount = await new Promise(resolve => {
-            db.get("SELECT COUNT(*) as cnt FROM user_sync_logs WHERE user_id = ? AND sync_date = ?", [userId, todayStr], (err, r) => {
-                resolve(r ? r.cnt : 0);
-            });
-        });
+        const dailyLimit = scope === 'all' ? DAILY_FULL_SYNC_LIMIT : DAILY_SYNC_LIMIT;
+        const syncCount = await countSyncsToday(userId, todayStr, scope);
 
-        if (syncCount >= DAILY_SYNC_LIMIT) {
+        if (syncCount >= dailyLimit) {
             return res.status(429).json({
-                error: `คุณสามารถ Sync ข้อมูลได้วันละ ${DAILY_SYNC_LIMIT} ครั้งเท่านั้น (กดได้อีกครั้งในวันพรุ่งนี้)`,
+                error: scope === 'all'
+                    ? `ปุ่ม Sync OpenProject Time กดได้วันละ ${DAILY_FULL_SYNC_LIMIT} ครั้งเท่านั้น (กดได้อีกครั้งในวันพรุ่งนี้)`
+                    : `คุณสามารถ Refresh ข้อมูลได้วันละ ${DAILY_SYNC_LIMIT} ครั้งเท่านั้น (กดได้อีกครั้งในวันพรุ่งนี้)`,
                 rateLimited: true,
                 canSyncToday: false
             });
@@ -3169,7 +3182,7 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
             await recalculateAndCacheRanking();
 
             // Record user sync execution
-            db.run("INSERT INTO user_sync_logs (user_id, sync_date) VALUES (?, ?)", [userId, todayStr]);
+            db.run("INSERT INTO user_sync_logs (user_id, sync_date, scope) VALUES (?, ?, ?)", [userId, todayStr, scope]);
 
             const lastSyncRow = await new Promise(resolve => {
                 db.get("SELECT MAX(updated_at) as last_updated FROM ranking_cache", [], (err, row) => resolve(row));
@@ -3310,13 +3323,10 @@ app.get('/api/users-stats', async (req, res) => {
         const todayStr = new Date().toISOString().split('T')[0];
 
         let canSyncToday = true;
+        let canSyncAllToday = true;
         if (!isAdmin && user) {
-            const syncCount = await new Promise(resolve => {
-                db.get("SELECT COUNT(*) as cnt FROM user_sync_logs WHERE user_id = ? AND sync_date = ?", [userId, todayStr], (err, r) => {
-                    resolve(r ? r.cnt : 0);
-                });
-            });
-            canSyncToday = syncCount < DAILY_SYNC_LIMIT;
+            canSyncToday = await countSyncsToday(userId, todayStr, 'self') < DAILY_SYNC_LIMIT;
+            canSyncAllToday = await countSyncsToday(userId, todayStr, 'all') < DAILY_FULL_SYNC_LIMIT;
         }
 
         const avatarByOpId = await new Promise(resolve => {
@@ -3350,7 +3360,9 @@ app.get('/api/users-stats', async (req, res) => {
             users: formattedUsers,
             lastSync,
             canSyncToday,
+            canSyncAllToday,
             dailySyncLimit: DAILY_SYNC_LIMIT,
+            dailyFullSyncLimit: DAILY_FULL_SYNC_LIMIT,
             myAvatar: user && user.avatar ? user.avatar : null,
             isAdmin: !!isAdmin
         });
