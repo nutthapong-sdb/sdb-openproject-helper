@@ -112,7 +112,7 @@ All tables are initialized in `server.js`:
   - If a workday has `status = 'completed'` (hours $\ge 8.0$) or is in `excluded_workdays`, the system skips re-querying time entries for that date.
   - Only workdays marked `'missing'` or newly added dates are evaluated against `openproject_time_entries` and `task_history`.
   - Completed days are upserted into `user_workday_statuses` with `status = 'completed'`, preventing previously logged days from erroneously reappearing as missing.
-- When an admin executes `Clear & Resync All`, `user_workday_statuses` is purged alongside `openproject_time_entries` and `ranking_cache`.
+- When an admin calls `POST /api/openproject/time-entries/clear-and-resync` (no UI button), `user_workday_statuses` is purged alongside `openproject_time_entries` and `ranking_cache`.
 
 ### D. Sync Projects Feature
 - Located directly below the Project and Task Type selectors in the Create Task panel (`#syncProjectsBtn`).
@@ -122,7 +122,7 @@ All tables are initialized in `server.js`:
 ### E. Role-Based Access Control (RBAC)
 - User role is read from `users.role` (`'admin'`, `'root'`, or `'user'`).
 - **Admin-Only Privileges**:
-  - `POST /api/openproject/time-entries/clear-and-resync` (Clear & Resync All button).
+  - `POST /api/openproject/time-entries/clear-and-resync` (API only, no UI button).
   - Reset Ranking button (`#resetRankingBtn`).
   - Editing Ranking Date Range filters and preset chips.
   - Adding/removing excluded workdays (`/api/openproject/excluded-workdays`).

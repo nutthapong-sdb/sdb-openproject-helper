@@ -466,10 +466,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (tabExcludedBtnElem) {
                 tabExcludedBtnElem.style.display = isAdminUser ? 'inline-block' : 'none';
             }
-            const clearResyncBtnElem = document.getElementById('clearResyncTimeBtn');
-            if (clearResyncBtnElem) {
-                clearResyncBtnElem.style.display = isAdminUser ? 'inline-flex' : 'none';
-            }
 
             if (unloggedTitle) {
                 unloggedTitle.textContent = 'รายการที่ยังไม่ลงข้อมูล';
@@ -727,66 +723,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             }, 1500);
         });
     };
-
-    const clearResyncBtn = document.getElementById('clearResyncTimeBtn');
-    if (clearResyncBtn) {
-        clearResyncBtn.addEventListener('click', async () => {
-            const confirm = typeof Swal !== 'undefined' ? await Swal.fire({
-                title: 'บังคับเคลียร์และดึงข้อมูลใหม่ทั้งหมด?',
-                text: 'ระบบจะทำการล้างฐานข้อมูลชั่วโมงทำงานเดิมในเครื่อง และดึงข้อมูลชั่วโมงทำงานทั้งหมดจาก OpenProject API ตั้งแต่เริ่มต้นใหม่ (อาจใช้เวลา 20-30 วินาที)',
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#e53935',
-                confirmButtonText: 'ยืนยัน ล้างและดึงใหม่ทั้งหมด',
-                cancelButtonText: 'ยกเลิก'
-            }) : { isConfirmed: true };
-
-            if (!confirm.isConfirmed) return;
-
-            const icon = document.getElementById('clearResyncTimeIcon');
-            if (icon) icon.textContent = '⏳';
-            clearResyncBtn.disabled = true;
-
-            showBlockingSyncModal('กำลังเคลียร์ฐานข้อมูลเดิม และดึงข้อมูลชั่วโมงทำงานทั้งหมดใหม่จาก OpenProject API...');
-
-            try {
-                // 1. Trigger background clear and resync (returns in 100ms, zero Cloudflare 524 timeouts!)
-                await safeFetchJson('/api/openproject/time-entries/clear-and-resync', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                });
-
-                // 2. Poll background progress live
-                const data = await pollSyncUntilComplete();
-
-                await loadUserStats();
-                if (typeof loadWeeklyStats === 'function') await loadWeeklyStats();
-
-                closeSyncModal();
-                if (typeof Swal !== 'undefined') {
-                    await Swal.fire({
-                        icon: 'success',
-                        title: 'เคลียร์และดึงข้อมูลใหม่สำเร็จ',
-                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">ล้างฐานข้อมูลเดิมและดึงข้อมูลชั่วโมงทำงานทั้งหมดจาก OpenProject API เรียบร้อยแล้ว (${(data && data.count) ? data.count.toLocaleString() : 0} รายการ)</p>`,
-                        showConfirmButton: true,
-                        confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
-                        confirmButtonColor: '#00897b',
-                        allowOutsideClick: false,
-                        allowEscapeKey: false
-                    });
-                }
-            } catch (e) {
-                closeSyncModal();
-                console.error('[clearResyncBtn]', e);
-                const msg = e.message || 'ไม่สามารถเคลียร์และดึงข้อมูลสดได้';
-                if (typeof Swal !== 'undefined') Swal.fire('Sync Notice', msg, 'error');
-                await loadUserStats();
-            } finally {
-                if (icon) icon.textContent = '🗑️';
-                clearResyncBtn.disabled = false;
-            }
-        });
-    }
 
     // Check on page load if server sync is currently active (handles browser refresh/reload lock)
     const checkActiveSyncOnPageLoad = async () => {
