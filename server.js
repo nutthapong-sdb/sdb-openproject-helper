@@ -1448,6 +1448,16 @@ db.serialize(() => {
         PRIMARY KEY (user_id, workdate)
     )`);
 
+    // One-time slim down: time entries keep hours only, so drop the text cached by earlier syncs and reclaim the space.
+    db.get("SELECT value FROM meta WHERE key = 'time_entries_hours_only_v1'", [], (err, row) => {
+        if (err || row) return;
+        db.run("UPDATE openproject_time_entries SET comment = NULL, work_package_title = NULL, project_name = NULL", [], (updErr) => {
+            if (updErr) return console.warn('[Migration] hours-only cleanup failed:', updErr.message);
+            db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('time_entries_hours_only_v1', '1')");
+            db.run("VACUUM", [], (vacErr) => { if (vacErr) console.warn('[Migration] VACUUM skipped:', vacErr.message); });
+        });
+    });
+
     // One-time purge: earlier cached 'completed' days were computed with double-counted task_history hours.
     db.get("SELECT value FROM meta WHERE key = 'workday_cache_v2'", [], (err, row) => {
         if (err || row) return;
@@ -2401,7 +2411,8 @@ function getRankingSettings() {
                 });
             }
             const today = new Date().toISOString().split('T')[0];
-            const activeStartDate = settings.mode === 'all' ? '' : settings.startDate;
+            const requestedStart = settings.mode === 'all' ? '' : settings.startDate;
+            const activeStartDate = !requestedStart || requestedStart < MIN_SYNC_DATE ? MIN_SYNC_DATE : requestedStart;
             const activeEndDate = settings.mode === 'all' ? '' : (settings.mode === 'to_present' ? today : settings.endDate);
             resolve({
                 ...settings,
@@ -2436,6 +2447,7 @@ function parseIsoDuration(durationStr) {
 }
 
 const DAILY_SYNC_LIMIT = 3;
+const MIN_SYNC_DATE = '2026-01-01';
 const TIME_ENTRIES_PAGE_SIZE = 500;
 const TIME_ENTRIES_MAX_PAGES = 300;
 
@@ -2459,7 +2471,8 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
     const days = parseInt(options.days || 30);
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - days);
-    const cutoffStr = isForceAll ? '2000-01-01' : cutoffDate.toISOString().split('T')[0];
+    const cutoffIso = cutoffDate.toISOString().split('T')[0];
+    const cutoffStr = isForceAll || cutoffIso < MIN_SYNC_DATE ? MIN_SYNC_DATE : cutoffIso;
 
     const maxPagesToFetch = TIME_ENTRIES_MAX_PAGES;
 
@@ -2488,17 +2501,14 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
     const activeOpIds = new Set();
 
     const stmt = db.prepare(`
-        INSERT INTO openproject_time_entries (openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO openproject_time_entries (openproject_id, user_id, user_name, work_package_id, spent_on, hours, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(openproject_id) DO UPDATE SET
             user_id=excluded.user_id,
             user_name=excluded.user_name,
             work_package_id=excluded.work_package_id,
-            work_package_title=excluded.work_package_title,
-            project_name=excluded.project_name,
             spent_on=excluded.spent_on,
             hours=excluded.hours,
-            comment=excluded.comment,
             updated_at=CURRENT_TIMESTAMP
     `);
 
@@ -2541,14 +2551,11 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
         activeOpIds.add(openproject_id);
         const spent_on = (elem.spentOn || '').slice(0, 10);
         const hours = parseIsoDuration(elem.hours);
-        const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
         const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
         const user_name = elem._links && elem._links.user ? (elem._links.user.title || '') : '';
         const work_package_id = elem._links && elem._links.workPackage ? elem._links.workPackage.href.split('/').pop() : '';
-        const work_package_title = elem._links && elem._links.workPackage ? (elem._links.workPackage.title || '') : '';
-        const project_name = elem._links && elem._links.project ? (elem._links.project.title || '') : '';
 
-        stmt.run([openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment]);
+        stmt.run([openproject_id, user_id, user_name, work_package_id, spent_on, hours]);
         totalSynced++;
     };
 
@@ -3485,12 +3492,11 @@ app.get('/api/weekly-stats', async (req, res) => {
 
             db.serialize(() => {
                 const stmt = db.prepare(`
-                    INSERT INTO openproject_time_entries (openproject_id, user_id, user_name, work_package_id, comment, project_name, spent_on, hours, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    INSERT INTO openproject_time_entries (openproject_id, user_id, user_name, work_package_id, spent_on, hours, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(openproject_id) DO UPDATE SET
                         hours = excluded.hours,
                         spent_on = excluded.spent_on,
-                        comment = excluded.comment,
                         updated_at = CURRENT_TIMESTAMP
                 `);
 
@@ -3498,8 +3504,7 @@ app.get('/api/weekly-stats', async (req, res) => {
                     const opId = String(e.id);
                     const wpId = e._links && e._links.workPackage ? e._links.workPackage.href.split('/').pop() : null;
                     const hoursVal = parseIsoDuration(e.hours);
-                    const comment = e.comment ? (e.comment.raw || '') : '';
-                    stmt.run([opId, String(userId), meName, wpId, comment, '', e.spentOn, hoursVal]);
+                    stmt.run([opId, String(userId), meName, wpId, e.spentOn, hoursVal]);
                 });
 
                 stmt.finalize(async () => {

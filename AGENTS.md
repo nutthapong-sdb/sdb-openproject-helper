@@ -102,6 +102,7 @@ All tables are initialized in `server.js`:
   - Any hours logged beyond 8.0 hours on a single workday, or any hours logged on weekends (Saturday/Sunday), are categorized as `ot_hours`.
   - Normal work hours on weekdays up to 8.0 hours are categorized as `work_hours`.
 - **Source of truth**: Hours come only from `openproject_time_entries` (sync pages through every entry filtered by `spentOn`: each registered user fetches their own entries with their own `api_key`, then the key that sees the most fetches everyone else). Never add `task_history` hours; they duplicate the same time entries.
+- **Hours only, 2026 onward**: Time entries store only ids, user, `spent_on` and `hours` (never comments or titles), and nothing before `MIN_SYNC_DATE` (`2026-01-01`) is fetched or counted.
 - **Grouping**: Always group time entries strictly by `user_id` (`COALESCE(NULLIF(t.user_id, ''), t.user_name)`). Never use loose name matching (`LOWER(TRIM(...))`) in SQL joins as it causes duplicate cartesian products and inaccurate counts.
 - **Sorting**: Rows must be sorted strictly by `total_hours DESC`, then `work_hours DESC`, then `task_count DESC`.
 
