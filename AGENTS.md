@@ -114,6 +114,8 @@ All tables are initialized in `server.js`:
   - Completed days are upserted into `user_workday_statuses` with `status = 'completed'`, preventing previously logged days from erroneously reappearing as missing.
 - When an admin calls `POST /api/openproject/time-entries/clear-and-resync` (no UI button), `user_workday_statuses` is purged alongside `openproject_time_entries` and `ranking_cache`.
 
+- The Refresh button (`scope: 'self'`) fetches only the caller's own entries with their own `api_key`, limited to 3 per day for non-admins; the prune is scoped to that user.
+
 ### D. Sync Projects Feature
 - Located directly below the Project and Task Type selectors in the Create Task panel (`#syncProjectsBtn`).
 - Open to all authenticated users (executes with the calling user's `user_apikey`).
@@ -126,6 +128,7 @@ All tables are initialized in `server.js`:
   - Reset Ranking button (`#resetRankingBtn`).
   - Editing Ranking Date Range filters and preset chips.
   - Adding/removing excluded workdays (`/api/openproject/excluded-workdays`).
+  - `Sync OpenProject Time` button (`scope: 'all'`): hidden for non-admins and rejected with 403 by the API; it syncs every registered user's own entries with their own `api_key`.
   - Unlimited ranking sync operations (regular users are rate-limited to 3 syncs per calendar day via `user_sync_logs`).
 
 ---

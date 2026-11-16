@@ -2465,9 +2465,10 @@ let activeSyncState = {
 };
 
 // Sync Time Entries directly from OpenProject API /api/v3/time_entries
-// Options: { days: 30, forceAll: false } (Supports 7, 14, 30, 90, 180, 365 days, or forceAll for full 20,000+ sync)
+// Options: { days: 30, forceAll: false, onlyUser: { apiKey, openprojectId, name } } (onlyUser limits the sync to one person's own entries, fetched with their own key)
 async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
     const isForceAll = !!options.forceAll;
+    const onlyUser = options.onlyUser || null;
     const days = parseInt(options.days || 30);
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - days);
@@ -2486,11 +2487,13 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
     const apiKeys = new Set();
     if (specificApiKey) apiKeys.add(specificApiKey);
 
-    const registeredUsers = await new Promise(resolve => {
-        db.all("SELECT name, api_key, openproject_id FROM users WHERE api_key IS NOT NULL AND api_key != ''", [], (err, rows) => {
-            resolve(rows || []);
+    const registeredUsers = onlyUser
+        ? [{ name: onlyUser.name, api_key: onlyUser.apiKey, openproject_id: onlyUser.openprojectId }]
+        : await new Promise(resolve => {
+            db.all("SELECT name, api_key, openproject_id FROM users WHERE api_key IS NOT NULL AND api_key != ''", [], (err, rows) => {
+                resolve(rows || []);
+            });
         });
-    });
     registeredUsers.forEach(u => apiKeys.add(u.api_key));
 
     if (apiKeys.size === 0) {
@@ -2640,44 +2643,47 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
             seenOwners.add(opId);
             const result = await fetchAllPages(u.api_key, [{ user: { operator: '=', values: [opId] } }], `own entries of ${u.name || opId}`);
             if (result.ok) ownedIds.add(opId);
+            else if (onlyUser) throw new Error('API key ของคุณใช้ดึงข้อมูลจาก OpenProject ไม่ได้ กรุณาตรวจสอบ API key');
             else failedOwnKeyUsers.push(u.name || opId);
         }
 
-        // Pass 2: everyone else (people without a stored key, or whose key failed) comes from the key that sees the most.
-        const candidateKeys = [];
-        if (specificApiKey) candidateKeys.push(specificApiKey);
-        Array.from(apiKeys).forEach(k => {
-            if (!candidateKeys.includes(k)) candidateKeys.push(k);
-        });
+        // Pass 2 (skipped for a single-person sync): everyone else (no stored key, or a key that failed) comes from the key that sees the most.
+        if (!onlyUser) {
+            const candidateKeys = [];
+            if (specificApiKey) candidateKeys.push(specificApiKey);
+            Array.from(apiKeys).forEach(k => {
+                if (!candidateKeys.includes(k)) candidateKeys.push(k);
+            });
 
-        let othersFilter = ownedIds.size > 0 ? [{ user: { operator: '!', values: Array.from(ownedIds) } }] : [];
-        const pickWidestKey = async (extraFilters) => {
-            let best = { key: null, total: -1 };
-            for (const key of candidateKeys) {
-                const total = await probeTotal(key, extraFilters);
-                if (total > best.total) best = { key, total };
+            let othersFilter = ownedIds.size > 0 ? [{ user: { operator: '!', values: Array.from(ownedIds) } }] : [];
+            const pickWidestKey = async (extraFilters) => {
+                let best = { key: null, total: -1 };
+                for (const key of candidateKeys) {
+                    const total = await probeTotal(key, extraFilters);
+                    if (total > best.total) best = { key, total };
+                }
+                return best;
+            };
+            let widest = await pickWidestKey(othersFilter);
+            if (!widest.key && othersFilter.length > 0) {
+                console.warn('[TimeEntries] Exclusion filter refused by every key, falling back to an unfiltered fetch.');
+                othersFilter = [];
+                widest = await pickWidestKey(othersFilter);
             }
-            return best;
-        };
-        let widest = await pickWidestKey(othersFilter);
-        if (!widest.key && othersFilter.length > 0) {
-            console.warn('[TimeEntries] Exclusion filter refused by every key, falling back to an unfiltered fetch.');
-            othersFilter = [];
-            widest = await pickWidestKey(othersFilter);
-        }
-        const widestKey = widest.key;
-        if (!widestKey) {
-            throw new Error('Could not authenticate with any OpenProject API Key.');
-        }
-        console.log(`[TimeEntries] Remaining entries via key ${widestKey.substring(0, 8)}... (sees ${widest.total} entries not owned by a stored key)`);
+            const widestKey = widest.key;
+            if (!widestKey) {
+                throw new Error('Could not authenticate with any OpenProject API Key.');
+            }
+            console.log(`[TimeEntries] Remaining entries via key ${widestKey.substring(0, 8)}... (sees ${widest.total} entries not owned by a stored key)`);
 
-        let others = await fetchAllPages(widestKey, othersFilter, 'entries of everyone else');
-        if (!others.ok && othersFilter.length > 0) {
-            console.warn('[TimeEntries] Exclusion filter refused, refetching everyone else without it.');
-            others = await fetchAllPages(widestKey, [], 'entries of everyone else (unfiltered)');
-        }
-        if (!others.ok) {
-            throw new Error(`OpenProject API returned HTTP ${others.status} on the first page`);
+            let others = await fetchAllPages(widestKey, othersFilter, 'entries of everyone else');
+            if (!others.ok && othersFilter.length > 0) {
+                console.warn('[TimeEntries] Exclusion filter refused, refetching everyone else without it.');
+                others = await fetchAllPages(widestKey, [], 'entries of everyone else (unfiltered)');
+            }
+            if (!others.ok) {
+                throw new Error(`OpenProject API returned HTTP ${others.status} on the first page`);
+            }
         }
     } finally {
         await browser.close().catch(() => {});
@@ -2696,8 +2702,9 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
                 db.run(`
                     DELETE FROM openproject_time_entries 
                     WHERE spent_on >= ?
+                      ${onlyUser ? "AND COALESCE(NULLIF(user_id, ''), user_name) = ?" : ''}
                       AND openproject_id NOT IN (SELECT op_id FROM active_op_ids)
-                `, [cutoffStr]);
+                `, onlyUser ? [cutoffStr, String(onlyUser.openprojectId)] : [cutoffStr]);
             });
         });
     }
@@ -3055,6 +3062,15 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
     const todayStr = new Date().toISOString().split('T')[0];
 
     const days = parseInt(req.body?.days || req.query?.days || 30);
+    const scope = (req.body?.scope || req.query?.scope) === 'all' ? 'all' : 'self';
+
+    // Syncing everyone with everyone's own key is admin-only; anyone else refreshes their own entries.
+    if (scope === 'all' && !isAdmin) {
+        return res.status(403).json({ error: "สิทธิ์ไม่ถูกต้อง: เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่ Sync ข้อมูลของทุกคนได้" });
+    }
+    if (scope === 'self' && !(user && user.openproject_id)) {
+        return res.status(400).json({ error: "บัญชีของคุณยังไม่ได้ผูก OpenProject ID จึงดึงข้อมูลของตัวเองไม่ได้" });
+    }
 
     // Lock check: if sync already active and under 5 minutes
     if (activeSyncState.active && (Date.now() - activeSyncState.startTime) < 300000) {
@@ -3105,7 +3121,10 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
     (async () => {
         try {
             console.log(`[TimeEntriesSync] Running background sync for past ${days} days...`);
-            const syncResult = await syncOpenProjectTimeEntries(userApiKey, { days });
+            const syncResult = await syncOpenProjectTimeEntries(userApiKey, {
+                days,
+                onlyUser: scope === 'self' ? { apiKey: user.api_key, openprojectId: String(user.openproject_id), name: user.name || user.username } : null
+            });
             
             // Recalculate and update ranking cache in DB
             await recalculateAndCacheRanking();

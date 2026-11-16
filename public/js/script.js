@@ -541,12 +541,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             const syncBtn = document.getElementById('syncTimeEntriesBtn');
-            if (syncBtn) {
-                if (data && data.canSyncToday === false && !data.isAdmin) {
-                    syncBtn.title = `คุณใช้สิทธิ์ Sync ครบ ${dailySyncLimit} ครั้งของวันนี้แล้ว (กดได้อีกครั้งในวันพรุ่งนี้)`;
-                } else {
-                    syncBtn.title = "ดึงข้อมูลชั่วโมงทำงานจริงจาก OpenProject API";
-                }
+            if (syncBtn) syncBtn.style.display = data && data.isAdmin ? 'inline-flex' : 'none';
+
+            const refreshBtn = document.getElementById('refreshUnloggedBtn');
+            if (refreshBtn) {
+                refreshBtn.title = data && data.canSyncToday === false && !data.isAdmin
+                    ? `คุณใช้สิทธิ์ Refresh ครบ ${dailySyncLimit} ครั้งของวันนี้แล้ว (กดได้อีกครั้งในวันพรุ่งนี้)`
+                    : 'กดเพื่ออัปเดตรายการงานค้างล่าสุด';
             }
 
         } catch (error) {
@@ -655,7 +656,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await safeFetchJson('/api/openproject/time-entries/sync', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ days })
+                    body: JSON.stringify({ days, scope: 'all' })
                 });
 
                 // 2. Poll live background progress
@@ -779,7 +780,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await safeFetchJson('/api/openproject/time-entries/sync', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ days })
+                    body: JSON.stringify({ days, scope: 'self' })
                 });
 
                 // 2. Poll live background progress
