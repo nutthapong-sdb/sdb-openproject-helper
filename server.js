@@ -1447,6 +1447,13 @@ db.serialize(() => {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (user_id, workdate)
     )`);
+
+    // One-time purge: earlier cached 'completed' days were computed with double-counted task_history hours.
+    db.get("SELECT value FROM meta WHERE key = 'workday_cache_v2'", [], (err, row) => {
+        if (err || row) return;
+        db.run("DELETE FROM user_workday_statuses");
+        db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('workday_cache_v2', '1')");
+    });
 });
 
 app.get('/api/wfh/defaults', (req, res) => {
@@ -1821,8 +1828,9 @@ app.get('/api/user', async (req, res) => {
         const userResp = session.user || { name: 'User' };
 
         if (localId) {
-            db.get("SELECT role FROM users WHERE id = ?", [localId], (err, row) => {
+            db.get("SELECT role, avatar FROM users WHERE id = ?", [localId], (err, row) => {
                 userResp.role = (row && row.role) ? row.role : 'user';
+                userResp.avatar = row && row.avatar ? row.avatar : null;
                 res.json(userResp);
             });
         } else {
@@ -2427,6 +2435,10 @@ function parseIsoDuration(durationStr) {
     return Math.round(totalHours * 100) / 100;
 }
 
+const DAILY_SYNC_LIMIT = 3;
+const TIME_ENTRIES_PAGE_SIZE = 500;
+const TIME_ENTRIES_MAX_PAGES = 300;
+
 // Active Sync State Tracking (for 5-minute timeout, progress tracking, and persistent page-reload lock)
 let activeSyncState = {
     active: false,
@@ -2449,38 +2461,30 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
     cutoffDate.setDate(cutoffDate.getDate() - days);
     const cutoffStr = isForceAll ? '2000-01-01' : cutoffDate.toISOString().split('T')[0];
 
-    // Determine max pages to fetch based on requested days range or forceAll
-    let maxPagesToFetch = 3;
-    if (isForceAll) maxPagesToFetch = 45;
-    else if (days <= 7) maxPagesToFetch = 1;
-    else if (days <= 14) maxPagesToFetch = 2;
-    else if (days <= 30) maxPagesToFetch = 3;
-    else if (days <= 90) maxPagesToFetch = 6;
-    else maxPagesToFetch = 10;
+    const maxPagesToFetch = TIME_ENTRIES_MAX_PAGES;
 
-    activeSyncState.totalPages = maxPagesToFetch;
+    activeSyncState.totalPages = 0;
     activeSyncState.progressPages = 0;
     activeSyncState.totalSynced = 0;
 
-    console.log(`[TimeEntries] Syncing time entries from OpenProject API (forceAll: ${isForceAll}, range: past ${days} days, cutoff: ${cutoffStr}, max pages: ${maxPagesToFetch})...`);
+    console.log(`[TimeEntries] Syncing time entries from OpenProject API (forceAll: ${isForceAll}, range: past ${days} days, cutoff: ${cutoffStr})...`);
 
     // Collect API keys to use (combining current user + all registered users in DB)
     const apiKeys = new Set();
     if (specificApiKey) apiKeys.add(specificApiKey);
 
-    const dbKeys = await new Promise(resolve => {
-        db.all("SELECT api_key FROM users WHERE api_key IS NOT NULL AND api_key != ''", [], (err, rows) => {
-            resolve((rows || []).map(r => r.api_key));
+    const registeredUsers = await new Promise(resolve => {
+        db.all("SELECT name, api_key, openproject_id FROM users WHERE api_key IS NOT NULL AND api_key != ''", [], (err, rows) => {
+            resolve(rows || []);
         });
     });
-    dbKeys.forEach(k => apiKeys.add(k));
+    registeredUsers.forEach(u => apiKeys.add(u.api_key));
 
     if (apiKeys.size === 0) {
         throw new Error('No API keys found to sync OpenProject time entries.');
     }
 
     let totalSynced = 0;
-    let maxTotalInOp = 0;
     const activeOpIds = new Set();
 
     const stmt = db.prepare(`
@@ -2516,90 +2520,157 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
     });
 
+    const pageSize = TIME_ENTRIES_PAGE_SIZE;
+    const sortParam = JSON.stringify([['id', 'desc']]);
+    let donePages = 0;
+    let knownPages = 0;
+    const failedOwnKeyUsers = [];
+
+    const buildFilters = (extraFilters) => encodeURIComponent(JSON.stringify([
+        { spentOn: { operator: '<>d', values: [cutoffStr, '2099-12-31'] } },
+        ...extraFilters
+    ]));
+
+    const readJsonBody = (page) => page.evaluate(() => {
+        const pre = document.querySelector('pre');
+        return pre ? pre.innerText : document.body.innerText;
+    });
+
+    const saveElement = (elem) => {
+        const openproject_id = String(elem.id);
+        activeOpIds.add(openproject_id);
+        const spent_on = (elem.spentOn || '').slice(0, 10);
+        const hours = parseIsoDuration(elem.hours);
+        const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
+        const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
+        const user_name = elem._links && elem._links.user ? (elem._links.user.title || '') : '';
+        const work_package_id = elem._links && elem._links.workPackage ? elem._links.workPackage.href.split('/').pop() : '';
+        const work_package_title = elem._links && elem._links.workPackage ? (elem._links.workPackage.title || '') : '';
+        const project_name = elem._links && elem._links.project ? (elem._links.project.title || '') : '';
+
+        stmt.run([openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment]);
+        totalSynced++;
+    };
+
+    // Chrome caches Basic credentials per origin, so every key runs in its own fresh browser context.
+    // Returns the matching entry total, or -1 when the key is refused.
+    const probeTotal = async (key, extraFilters) => {
+        const context = await browser.createBrowserContext();
+        try {
+            const probePage = await context.newPage();
+            await probePage.authenticate({ username: 'apikey', password: key });
+            const testUrl = `${HOST}/api/v3/time_entries?pageSize=1&offset=1&filters=${buildFilters(extraFilters)}`;
+            const resp = await probePage.goto(testUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => null);
+            if (!resp || resp.status() !== 200) return -1;
+            return Number(JSON.parse(await readJsonBody(probePage)).total) || 0;
+        } catch {
+            return -1;
+        } finally {
+            await context.close().catch(() => {});
+        }
+    };
+
+    // Pages through every matching entry with one key. Returns { ok: false } only when the very first page is refused;
+    // a failure on any later page throws, because the prune step below must never run on a partial fetch.
+    const fetchAllPages = async (key, extraFilters, label) => {
+        const context = await browser.createBrowserContext();
+        try {
+            const page = await context.newPage();
+            await page.authenticate({ username: 'apikey', password: key });
+            const filters = buildFilters(extraFilters);
+            let pageNum = 1;
+            let totalPages = 1;
+
+            while (pageNum <= maxPagesToFetch) {
+                const url = `${HOST}/api/v3/time_entries?sortBy=${encodeURIComponent(sortParam)}&pageSize=${pageSize}&offset=${pageNum}&filters=${filters}`;
+                console.log(`[TimeEntries] ${label} page ${pageNum}/${totalPages} (key ${key.substring(0, 8)}...)`);
+
+                const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(err => {
+                    if (pageNum === 1) return null;
+                    throw err;
+                });
+                if (!response || response.status() !== 200) {
+                    if (pageNum === 1) return { ok: false, status: response ? response.status() : 'no response' };
+                    throw new Error(`OpenProject API returned HTTP ${response.status()} on page ${pageNum} (${label})`);
+                }
+
+                let data = null;
+                try {
+                    data = JSON.parse(await readJsonBody(page));
+                } catch {
+                    throw new Error(`OpenProject API returned invalid JSON on page ${pageNum} (${label})`);
+                }
+                if (!data || !data._embedded) throw new Error(`OpenProject API returned no entries payload on page ${pageNum} (${label})`);
+
+                const elements = data._embedded.elements || [];
+                if (pageNum === 1) {
+                    totalPages = Math.max(1, Math.ceil((data.total || elements.length) / pageSize));
+                    knownPages += totalPages;
+                    activeSyncState.totalPages = knownPages;
+                }
+                donePages++;
+                activeSyncState.progressPages = donePages;
+
+                elements.forEach(saveElement);
+                activeSyncState.totalSynced = totalSynced;
+
+                if (elements.length < pageSize || pageNum >= totalPages) break;
+                pageNum++;
+            }
+            return { ok: true };
+        } finally {
+            await context.close().catch(() => {});
+        }
+    };
+
     try {
-        const page = await browser.newPage();
-        
-        // Find a working API key from candidates
+        // Pass 1: every registered user fetches their own entries with their own API key.
+        const ownedIds = new Set();
+        const seenOwners = new Set();
+        for (const u of registeredUsers) {
+            const opId = u.openproject_id ? String(u.openproject_id) : '';
+            if (!opId || seenOwners.has(opId)) continue;
+            seenOwners.add(opId);
+            const result = await fetchAllPages(u.api_key, [{ user: { operator: '=', values: [opId] } }], `own entries of ${u.name || opId}`);
+            if (result.ok) ownedIds.add(opId);
+            else failedOwnKeyUsers.push(u.name || opId);
+        }
+
+        // Pass 2: everyone else (people without a stored key, or whose key failed) comes from the key that sees the most.
         const candidateKeys = [];
         if (specificApiKey) candidateKeys.push(specificApiKey);
         Array.from(apiKeys).forEach(k => {
             if (!candidateKeys.includes(k)) candidateKeys.push(k);
         });
 
-        let workingKey = null;
-        for (const key of candidateKeys) {
-            await page.authenticate({ username: 'apikey', password: key });
-            const testUrl = `${HOST}/api/v3/time_entries?pageSize=1&offset=1`;
-            const testResp = await page.goto(testUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => null);
-            if (testResp && testResp.status() === 200) {
-                workingKey = key;
-                console.log(`[TimeEntries] Validated working API Key ${key.substring(0, 8)}...`);
-                break;
+        let othersFilter = ownedIds.size > 0 ? [{ user: { operator: '!', values: Array.from(ownedIds) } }] : [];
+        const pickWidestKey = async (extraFilters) => {
+            let best = { key: null, total: -1 };
+            for (const key of candidateKeys) {
+                const total = await probeTotal(key, extraFilters);
+                if (total > best.total) best = { key, total };
             }
+            return best;
+        };
+        let widest = await pickWidestKey(othersFilter);
+        if (!widest.key && othersFilter.length > 0) {
+            console.warn('[TimeEntries] Exclusion filter refused by every key, falling back to an unfiltered fetch.');
+            othersFilter = [];
+            widest = await pickWidestKey(othersFilter);
         }
-
-        if (!workingKey) {
+        const widestKey = widest.key;
+        if (!widestKey) {
             throw new Error('Could not authenticate with any OpenProject API Key.');
         }
+        console.log(`[TimeEntries] Remaining entries via key ${widestKey.substring(0, 8)}... (sees ${widest.total} entries not owned by a stored key)`);
 
-        await page.authenticate({ username: 'apikey', password: workingKey });
-
-        let pageNum = 1;
-        const pageSize = 500;
-        const sortParam = JSON.stringify([['id', 'desc']]);
-
-        while (pageNum <= maxPagesToFetch) {
-            activeSyncState.progressPages = pageNum;
-            activeSyncState.totalSynced = totalSynced;
-            const url = `${HOST}/api/v3/time_entries?sortBy=${encodeURIComponent(sortParam)}&pageSize=${pageSize}&offset=${pageNum}`;
-            console.log(`[TimeEntries] Fast-fetching page ${pageNum}/${maxPagesToFetch} with API Key ${workingKey.substring(0, 8)}...`);
-
-            const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            if (!response || response.status() !== 200) {
-                break;
-            }
-
-            const jsonText = await page.evaluate(() => {
-                const pre = document.querySelector('pre');
-                return pre ? pre.innerText : document.body.innerText;
-            });
-            let data = null;
-            try {
-                data = JSON.parse(jsonText);
-            } catch {
-                break;
-            }
-
-            if (!data || !data._embedded) break;
-
-            const elements = data._embedded.elements || [];
-            const totalInOp = data.total || elements.length;
-            if (totalInOp > maxTotalInOp) maxTotalInOp = totalInOp;
-
-            if (elements.length === 0) break;
-
-            let reachedCutoff = false;
-            elements.forEach(elem => {
-                const openproject_id = String(elem.id);
-                activeOpIds.add(openproject_id);
-                const spent_on = (elem.spentOn || '').slice(0, 10);
-                if (!isForceAll && spent_on && spent_on < cutoffStr) {
-                    reachedCutoff = true;
-                }
-                const hours = parseIsoDuration(elem.hours);
-                const comment = (elem.comment && elem.comment.raw) ? elem.comment.raw : '';
-                const user_id = elem._links && elem._links.user ? elem._links.user.href.split('/').pop() : '';
-                const user_name = elem._links && elem._links.user ? (elem._links.user.title || '') : '';
-                const work_package_id = elem._links && elem._links.workPackage ? elem._links.workPackage.href.split('/').pop() : '';
-                const work_package_title = elem._links && elem._links.workPackage ? (elem._links.workPackage.title || '') : '';
-                const project_name = elem._links && elem._links.project ? (elem._links.project.title || '') : '';
-
-                stmt.run([openproject_id, user_id, user_name, work_package_id, work_package_title, project_name, spent_on, hours, comment]);
-                totalSynced++;
-            });
-
-            if (elements.length < pageSize || reachedCutoff) break;
-            pageNum++;
+        let others = await fetchAllPages(widestKey, othersFilter, 'entries of everyone else');
+        if (!others.ok && othersFilter.length > 0) {
+            console.warn('[TimeEntries] Exclusion filter refused, refetching everyone else without it.');
+            others = await fetchAllPages(widestKey, [], 'entries of everyone else (unfiltered)');
+        }
+        if (!others.ok) {
+            throw new Error(`OpenProject API returned HTTP ${others.status} on the first page`);
         }
     } finally {
         await browser.close().catch(() => {});
@@ -2626,8 +2697,9 @@ async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
 
     return {
         ok: true,
-        count: totalSynced,
-        totalInOpenProject: maxTotalInOp
+        count: activeOpIds.size,
+        totalInOpenProject: activeOpIds.size,
+        failedOwnKeyUsers
     };
 }
 
@@ -2757,22 +2829,12 @@ async function calculateUserMissingWorkdays(assigneeId, userName, startDateStr, 
             const placeholders = pendingWorkdays.map(() => '?').join(',');
             const query = `
                 SELECT spent_on, SUM(hours) as day_hours
-                FROM (
-                    SELECT spent_on, hours
-                    FROM openproject_time_entries
-                    WHERE (user_id = ? OR LOWER(TRIM(user_name)) = LOWER(TRIM(?)))
-
-                    UNION ALL
-
-                    SELECT COALESCE(NULLIF(start_date, ''), DATE(created_at)) as spent_on, CAST(spent_hours AS REAL) as hours
-                    FROM task_history
-                    WHERE (user_id = ? OR user_id = ?)
-                )
-                WHERE spent_on IN (${placeholders})
+                FROM openproject_time_entries
+                WHERE COALESCE(NULLIF(user_id, ''), user_name) IN (?, ?)
+                  AND spent_on IN (${placeholders})
                 GROUP BY spent_on
             `;
             const params = [
-                String(assigneeId), (userName || '').trim(),
                 String(assigneeId), String(userName || '').trim(),
                 ...pendingWorkdays.map(w => w.date)
             ];
@@ -2848,106 +2910,78 @@ async function recalculateAndCacheRanking() {
     const settings = await getRankingSettings();
     const { activeStartDate, activeEndDate } = settings;
 
-    let localDateCond = '';
-    let opDateCond = '';
-    const localParams = [];
-    const opParams = [];
+    const opWhere = activeStartDate && activeEndDate
+        ? 'WHERE DATE(spent_on) BETWEEN DATE(?) AND DATE(?)'
+        : activeStartDate ? 'WHERE DATE(spent_on) >= DATE(?)'
+        : activeEndDate ? 'WHERE DATE(spent_on) <= DATE(?)' : '';
+    const opParams = [activeStartDate, activeEndDate].filter(Boolean);
 
-    if (activeStartDate && activeEndDate) {
-        localDateCond = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) BETWEEN DATE(?) AND DATE(?)';
-        opDateCond = 'AND DATE(t.spent_on) BETWEEN DATE(?) AND DATE(?)';
-        localParams.push(activeStartDate, activeEndDate);
-        opParams.push(activeStartDate, activeEndDate);
-    } else if (activeStartDate) {
-        localDateCond = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) >= DATE(?)';
-        opDateCond = 'AND DATE(t.spent_on) >= DATE(?)';
-        localParams.push(activeStartDate);
-        opParams.push(activeStartDate);
-    } else if (activeEndDate) {
-        localDateCond = 'AND DATE(COALESCE(NULLIF(h.start_date, ""), h.created_at)) <= DATE(?)';
-        opDateCond = 'AND DATE(t.spent_on) <= DATE(?)';
-        localParams.push(activeEndDate);
-        opParams.push(activeEndDate);
-    }
+    const dbAll = (sql, params = []) => new Promise((resolve, reject) => {
+        db.all(sql, params, (err, r) => err ? reject(err) : resolve(r || []));
+    });
 
-    const query = `
-        SELECT 
-            a.id as assignee_id,
-            COALESCE(u.name, a.name) as name, 
-            SUM(COALESCE(daily_agg.total_work_hours, 0)) as work_hours,
-            SUM(COALESCE(daily_agg.total_ot_hours, 0)) as ot_hours,
-            MAX(COALESCE(t.total_op_hours, h.total_local_hours, 0)) as total_hours,
-            MAX(COALESCE(t.op_task_count, h.local_task_count, 0)) as task_count,
-            CASE WHEN MAX(t.total_op_hours) IS NOT NULL THEN 'openproject_api' ELSE 'local_history' END as data_source
-        FROM local_assignees a 
-        LEFT JOIN users u ON (u.openproject_id = CAST(a.id AS TEXT) OR u.id = CAST(a.id AS TEXT))
-        LEFT JOIN (
-            SELECT 
-                user_id,
-                SUM(hours) as total_op_hours,
-                COUNT(DISTINCT work_package_id) as op_task_count
-            FROM openproject_time_entries t
-            WHERE 1=1 ${opDateCond}
-            GROUP BY user_id
-        ) t ON (
-            t.user_id = CAST(a.id AS TEXT) 
-            OR t.user_id = u.openproject_id 
-            OR t.user_id = u.id 
-        )
-        LEFT JOIN (
-            SELECT 
-                user_id,
-                SUM(CAST(spent_hours AS REAL)) as total_local_hours,
-                COUNT(id) as local_task_count
-            FROM task_history h
-            WHERE 1=1 ${localDateCond}
-            GROUP BY user_id
-        ) h ON (h.user_id = CAST(a.id AS TEXT) OR h.user_id = u.id)
-        LEFT JOIN (
-            SELECT 
-                user_key,
-                SUM(CASE WHEN day_hours > 8.0 THEN 8.0 ELSE day_hours END) as total_work_hours,
-                SUM(CASE WHEN day_hours > 8.0 THEN day_hours - 8.0 ELSE 0.0 END) as total_ot_hours
-            FROM (
-                SELECT 
-                    COALESCE(NULLIF(t.user_id, ''), t.user_name) as user_key,
-                    t.spent_on,
-                    SUM(t.hours) as day_hours
-                FROM openproject_time_entries t
-                WHERE 1=1 ${opDateCond}
-                GROUP BY user_key, t.spent_on
+    // OpenProject time entries are the single source of truth (task_history rows are the same hours logged via this tool).
+    const dailyRows = await dbAll(`
+        SELECT COALESCE(NULLIF(user_id, ''), user_name) AS user_key, MAX(user_name) AS user_name, spent_on, SUM(hours) AS day_hours
+        FROM openproject_time_entries
+        ${opWhere}
+        GROUP BY user_key, spent_on
+    `, opParams);
+    const taskRows = await dbAll(`
+        SELECT COALESCE(NULLIF(user_id, ''), user_name) AS user_key, COUNT(DISTINCT work_package_id) AS task_count
+        FROM openproject_time_entries
+        ${opWhere}
+        GROUP BY user_key
+    `, opParams);
+    const assigneeRows = await dbAll(`
+        SELECT a.id AS assignee_id, COALESCE(u.name, a.name) AS name
+        FROM local_assignees a
+        LEFT JOIN users u ON u.openproject_id = CAST(a.id AS TEXT)
+        GROUP BY a.id
+    `);
 
-                UNION ALL
+    const byKey = new Map();
+    dailyRows.forEach(d => {
+        if (!d.user_key) return;
+        const key = String(d.user_key);
+        if (!byKey.has(key)) byKey.set(key, { name: d.user_name || key, work: 0, ot: 0, tasks: 0 });
+        const agg = byKey.get(key);
+        const dayHours = parseFloat(d.day_hours || 0);
+        agg.work += Math.min(dayHours, 8.0);
+        agg.ot += Math.max(dayHours - 8.0, 0);
+    });
+    taskRows.forEach(t => {
+        const agg = byKey.get(String(t.user_key));
+        if (agg) agg.tasks = t.task_count || 0;
+    });
 
-                SELECT 
-                    CAST(h.user_id AS TEXT) as user_key,
-                    COALESCE(NULLIF(h.start_date, ''), DATE(h.created_at)) as spent_on,
-                    SUM(CAST(h.spent_hours AS REAL)) as day_hours
-                FROM task_history h
-                WHERE 1=1 ${localDateCond}
-                GROUP BY user_key, spent_on
-            )
-            GROUP BY user_key
-        ) daily_agg ON (
-            daily_agg.user_key = CAST(a.id AS TEXT)
-            OR daily_agg.user_key = u.openproject_id
-            OR daily_agg.user_key = u.id
-        )
-        GROUP BY a.id, a.name, u.name
-    `;
-
-    const params = [...opParams, ...localParams, ...opParams, ...localParams];
-
-    const rows = await new Promise((resolve, reject) => {
-        db.all(query, params, (err, r) => err ? reject(err) : resolve(r || []));
+    const rows = assigneeRows.map(a => {
+        const agg = byKey.get(String(a.assignee_id));
+        byKey.delete(String(a.assignee_id));
+        return {
+            assignee_id: a.assignee_id,
+            name: a.name,
+            work_hours: agg ? agg.work : 0,
+            ot_hours: agg ? agg.ot : 0,
+            task_count: agg ? agg.tasks : 0,
+            data_source: 'openproject_api'
+        };
+    });
+    // Anyone who logged time in OpenProject but is not in local_assignees still gets a row.
+    byKey.forEach((agg, key) => {
+        rows.push({
+            assignee_id: key,
+            name: agg.name,
+            work_hours: agg.work,
+            ot_hours: agg.ot,
+            task_count: agg.tasks,
+            data_source: 'openproject_api'
+        });
     });
 
     for (const r of rows) {
-        let workH = typeof r.work_hours === 'number' ? r.work_hours : parseFloat(r.work_hours || 0);
-        let otH = typeof r.ot_hours === 'number' ? r.ot_hours : parseFloat(r.ot_hours || 0);
-
-        r.work_hours = Math.round(workH * 10) / 10;
-        r.ot_hours = Math.round(otH * 10) / 10;
+        r.work_hours = Math.round(r.work_hours * 10) / 10;
+        r.ot_hours = Math.round(r.ot_hours * 10) / 10;
         r.total_hours = Math.round((r.work_hours + r.ot_hours) * 10) / 10;
 
         r.missing_info = await calculateUserMissingWorkdays(r.assignee_id, r.name, activeStartDate, activeEndDate);
@@ -3001,7 +3035,7 @@ app.get('/api/openproject/time-entries/sync-status', (req, res) => {
     });
 });
 
-// POST Sync Time Entries from OpenProject API (Rate Limit: 1 sync per day per non-admin user)
+// POST Sync Time Entries from OpenProject API (Rate Limit: DAILY_SYNC_LIMIT syncs per day per non-admin user)
 app.post('/api/openproject/time-entries/sync', async (req, res) => {
     const userApiKey = req.cookies.user_apikey;
     if (!userApiKey) {
@@ -3024,7 +3058,7 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
         });
     }
 
-    // Standard user rate limit: 1 sync per day
+    // Standard user rate limit: DAILY_SYNC_LIMIT syncs per day
     if (!isAdmin && user) {
         const syncCount = await new Promise(resolve => {
             db.get("SELECT COUNT(*) as cnt FROM user_sync_logs WHERE user_id = ? AND sync_date = ?", [userId, todayStr], (err, r) => {
@@ -3032,9 +3066,9 @@ app.post('/api/openproject/time-entries/sync', async (req, res) => {
             });
         });
 
-        if (syncCount >= 1) {
+        if (syncCount >= DAILY_SYNC_LIMIT) {
             return res.status(429).json({
-                error: "คุณสามารถ Sync ข้อมูลได้วันละ 1 ครั้งเท่านั้น (กดได้อีกครั้งในวันพรุ่งนี้)",
+                error: `คุณสามารถ Sync ข้อมูลได้วันละ ${DAILY_SYNC_LIMIT} ครั้งเท่านั้น (กดได้อีกครั้งในวันพรุ่งนี้)`,
                 rateLimited: true,
                 canSyncToday: false
             });
@@ -3217,8 +3251,16 @@ app.get('/api/users-stats', async (req, res) => {
                     resolve(r ? r.cnt : 0);
                 });
             });
-            canSyncToday = syncCount < 1;
+            canSyncToday = syncCount < DAILY_SYNC_LIMIT;
         }
+
+        const avatarByOpId = await new Promise(resolve => {
+            db.all("SELECT openproject_id, avatar FROM users WHERE avatar IS NOT NULL AND openproject_id IS NOT NULL AND openproject_id != ''", [], (err, r) => {
+                const map = {};
+                (r || []).forEach(x => { map[String(x.openproject_id)] = x.avatar; });
+                resolve(map);
+            });
+        });
 
         const formattedUsers = rows.map(r => {
             let missingInfo = { missingCount: 0, totalMissingHours: 0, missingDays: [] };
@@ -3227,6 +3269,7 @@ app.get('/api/users-stats', async (req, res) => {
             } catch { }
             return {
                 assignee_id: r.assignee_id,
+                avatar: avatarByOpId[String(r.assignee_id)] || null,
                 name: r.name,
                 total_hours: r.total_hours,
                 work_hours: r.work_hours || 0,
@@ -3242,11 +3285,29 @@ app.get('/api/users-stats', async (req, res) => {
             users: formattedUsers,
             lastSync,
             canSyncToday,
+            dailySyncLimit: DAILY_SYNC_LIMIT,
+            myAvatar: user && user.avatar ? user.avatar : null,
             isAdmin: !!isAdmin
         });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
+});
+
+// PUT current user's pixel avatar (1-20, duplicates between users are allowed)
+app.put('/api/user/avatar', async (req, res) => {
+    const user = await getUserFromSessionOrKey(req);
+    if (!user) return res.status(401).json({ error: 'Not logged in' });
+
+    const avatar = Number(req.body && req.body.avatar);
+    if (!Number.isInteger(avatar) || avatar < 1 || avatar > 20) {
+        return res.status(400).json({ error: 'avatar must be an integer between 1 and 20' });
+    }
+
+    db.run("UPDATE users SET avatar = ? WHERE id = ?", [avatar, user.id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ ok: true, avatar });
+    });
 });
 
 // GET Ranking Settings (Public for authenticated dashboard users)
@@ -3555,6 +3616,11 @@ db.serialize(() => {
             if (!hasOpId) {
                 console.log("Migrating: Adding 'openproject_id' column...");
                 db.run("ALTER TABLE users ADD COLUMN openproject_id TEXT");
+            }
+            const hasAvatar = columns.some(c => c.name === 'avatar');
+            if (!hasAvatar) {
+                console.log("Migrating: Adding 'avatar' column...");
+                db.run("ALTER TABLE users ADD COLUMN avatar INTEGER");
             }
         }
     });

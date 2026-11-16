@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/e2e-webui.spec.mjs && node tests/time-entries-regression.mjs && node tests/auth-regression.mjs"
+    "test": "node tests/e2e-webui.spec.mjs && node tests/time-entries-regression.mjs && node tests/auth-regression.mjs && node tests/pixel-avatars-regression.mjs"
   },
   "keywords": [],
   "author": "",

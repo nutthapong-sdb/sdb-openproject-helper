@@ -167,12 +167,15 @@ db.serialize(() => {
         console.log('\n--- 5. Testing Daily Sync Quota Rate Limiting ---');
         const todayStr = '2026-08-25';
         
-        // Log sync for user 'u1' (standard user)
-        db.run(`INSERT INTO user_sync_logs (user_id, sync_date) VALUES ('u1', ?)`, [todayStr], () => {
+        const DAILY_SYNC_LIMIT = 3;
+
+        // Log 3 syncs for user 'u1' (standard user)
+        db.run(`INSERT INTO user_sync_logs (user_id, sync_date) VALUES ('u1', ?), ('u1', ?), ('u1', ?)`, [todayStr, todayStr, todayStr], () => {
             db.get(`SELECT COUNT(*) as cnt FROM user_sync_logs WHERE user_id = 'u1' AND sync_date = ?`, [todayStr], (err2, r1) => {
-                assert.strictEqual(r1.cnt, 1);
-                const isUserQuotaExceeded = r1.cnt >= 1;
+                assert.strictEqual(r1.cnt, 3);
+                const isUserQuotaExceeded = r1.cnt >= DAILY_SYNC_LIMIT;
                 assert.strictEqual(isUserQuotaExceeded, true);
+                assert.strictEqual(2 >= DAILY_SYNC_LIMIT, false);
 
                 // Admin 'u2' has unlimited syncs
                 const isAdmin = true;

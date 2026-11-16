@@ -70,7 +70,7 @@ All tables are initialized in `server.js`:
 
 | Table Name | Primary Key / Index | Description & Key Columns |
 |---|---|---|
-| `users` | `id INTEGER PRIMARY KEY` | Local user accounts (`username`, `password` bcrypt hash, `api_key`, `openproject_id`, `role`). Roles: `'user'`, `'admin'`, `'root'`. |
+| `users` | `id INTEGER PRIMARY KEY` | Local user accounts (`username`, `password` bcrypt hash, `api_key`, `openproject_id`, `role`, `avatar` 1-20 pixel character). Roles: `'user'`, `'admin'`, `'root'`. |
 | `projects` | `project_id TEXT UNIQUE` | Cached OpenProject projects (`project_id`, `name`, `updated_at`). |
 | `project_types` | `(project_id, type_id)` | Work package types mapped per project (`project_id`, `type_id`, `type_name`). |
 | `local_assignees` | `id INTEGER PRIMARY KEY` | Curated assignees with mapped `openproject_id` and display `name`. |
@@ -79,7 +79,7 @@ All tables are initialized in `server.js`:
 | `ranking_cache` | `assignee_id TEXT PRIMARY KEY` | Aggregated rankings (`assignee_id`, `name`, `work_hours`, `ot_hours`, `total_hours`, `task_count`, `missing_json`, `updated_at`). |
 | `user_workday_statuses` | `(user_id, workdate)` | Workday completion cache (`user_id`, `workdate`, `logged_hours`, `status` ['completed' \| 'missing' \| 'excluded'], `updated_at`). |
 | `excluded_workdays` | `excluded_date TEXT UNIQUE` | Company holidays and excluded dates (`excluded_date`, `reason`, `created_by`, `created_at`). |
-| `user_sync_logs` | `id INTEGER PRIMARY KEY` | Rate limiting log for ranking sync (`user_id`, `sync_date`, `synced_at`). 1 sync/day for non-admins. |
+| `user_sync_logs` | `id INTEGER PRIMARY KEY` | Rate limiting log for ranking sync (`user_id`, `sync_date`, `synced_at`). 3 syncs/day for non-admins (`DAILY_SYNC_LIMIT`). |
 | `wfh_form_defaults` | `user_id TEXT PRIMARY KEY` | Stored JSON defaults for WFH form per user. |
 | `wfh_remote_requests` | `id INTEGER PRIMARY KEY` | Log of submitted remote work requests. |
 | `meta` | `key TEXT PRIMARY KEY` | Key-value settings (`ranking_start_date`, `ranking_end_date`, `ranking_date_mode`, `last_sync`). |
@@ -101,6 +101,7 @@ All tables are initialized in `server.js`:
   - Normal day limit is 8.0 hours on weekdays.
   - Any hours logged beyond 8.0 hours on a single workday, or any hours logged on weekends (Saturday/Sunday), are categorized as `ot_hours`.
   - Normal work hours on weekdays up to 8.0 hours are categorized as `work_hours`.
+- **Source of truth**: Hours come only from `openproject_time_entries` (sync pages through every entry filtered by `spentOn`: each registered user fetches their own entries with their own `api_key`, then the key that sees the most fetches everyone else). Never add `task_history` hours; they duplicate the same time entries.
 - **Grouping**: Always group time entries strictly by `user_id` (`COALESCE(NULLIF(t.user_id, ''), t.user_name)`). Never use loose name matching (`LOWER(TRIM(...))`) in SQL joins as it causes duplicate cartesian products and inaccurate counts.
 - **Sorting**: Rows must be sorted strictly by `total_hours DESC`, then `work_hours DESC`, then `task_count DESC`.
 
@@ -124,7 +125,7 @@ All tables are initialized in `server.js`:
   - Reset Ranking button (`#resetRankingBtn`).
   - Editing Ranking Date Range filters and preset chips.
   - Adding/removing excluded workdays (`/api/openproject/excluded-workdays`).
-  - Unlimited ranking sync operations (regular users are rate-limited to 1 sync per calendar day via `user_sync_logs`).
+  - Unlimited ranking sync operations (regular users are rate-limited to 3 syncs per calendar day via `user_sync_logs`).
 
 ---
 

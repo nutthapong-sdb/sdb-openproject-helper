@@ -281,6 +281,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         return data || {};
     };
 
+    let myAvatarId = null;
+    let dailySyncLimit = 3;
+
     // Load User Stats
     const loadUserStats = async () => {
         const tbody = document.getElementById('usersStatsBody');
@@ -320,6 +323,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     badge.style.display = 'inline-block';
                 }
             }
+
+            myAvatarId = data && data.myAvatar ? data.myAvatar : null;
+            dailySyncLimit = data && data.dailySyncLimit ? data.dailySyncLimit : dailySyncLimit;
 
             const syncLabel = document.getElementById('rankingLastSyncLabel');
             if (syncLabel) {
@@ -375,7 +381,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <div class="rank-avatar-container" style="flex-shrink: 0;">
                                  ${iconHtml}
                                  <div class="rank-frame">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${rank <= 5 ? '#fff' : '#aaa'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                                    ${u.avatar && window.PixelAvatars ? `<span class="pixel-avatar" title="${PixelAvatars.list[u.avatar - 1] ? PixelAvatars.list[u.avatar - 1].name : ''}">${PixelAvatars.svg(u.avatar, 30)}</span>` : `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${rank <= 5 ? '#fff' : '#aaa'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>`}
                                  </div>
                             </div>
                             <div style="flex: 1; min-width: 140px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; margin-right: 8px;">
@@ -541,7 +547,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const syncBtn = document.getElementById('syncTimeEntriesBtn');
             if (syncBtn) {
                 if (data && data.canSyncToday === false && !data.isAdmin) {
-                    syncBtn.title = "คุณใช้สิทธิ์ Sync ของวันนี้ไปแล้ว (กดได้อีกครั้งในวันพรุ่งนี้)";
+                    syncBtn.title = `คุณใช้สิทธิ์ Sync ครบ ${dailySyncLimit} ครั้งของวันนี้แล้ว (กดได้อีกครั้งในวันพรุ่งนี้)`;
                 } else {
                     syncBtn.title = "ดึงข้อมูลชั่วโมงทำงานจริงจาก OpenProject API";
                 }
@@ -552,6 +558,43 @@ document.addEventListener('DOMContentLoaded', async () => {
             tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; padding: 20px; color: #c62828;">Error loading stats: ${error.message}</td></tr>`;
         }
     };
+
+    const pickAvatarBtn = document.getElementById('pickAvatarBtn');
+    if (pickAvatarBtn && window.PixelAvatars && typeof Swal !== 'undefined') {
+        pickAvatarBtn.addEventListener('click', async () => {
+            const cells = PixelAvatars.list.map(c => `
+                <button type="button" class="avatar-pick-cell${c.id === myAvatarId ? ' selected' : ''}" data-avatar="${c.id}" title="${c.name}">
+                    ${PixelAvatars.svg(c.id, 56)}
+                    <span>${c.name}</span>
+                </button>`).join('');
+
+            await Swal.fire({
+                title: '🎮 เลือกตัวละครของคุณ',
+                html: `<div class="avatar-pick-grid">${cells}</div>`,
+                showConfirmButton: false,
+                showCloseButton: true,
+                width: 640,
+                didOpen: (popup) => {
+                    popup.querySelectorAll('.avatar-pick-cell').forEach(btn => {
+                        btn.addEventListener('click', async () => {
+                            const avatar = parseInt(btn.dataset.avatar, 10);
+                            try {
+                                await safeFetchJson('/api/user/avatar', {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ avatar })
+                                });
+                                Swal.close();
+                                await loadUserStats();
+                            } catch (e) {
+                                Swal.showValidationMessage(e.message || 'บันทึกตัวละครไม่สำเร็จ');
+                            }
+                        });
+                    });
+                }
+            });
+        });
+    }
 
     // --- Blocking Sync Modal & Timeout Handler ---
     let activeSyncPollInterval = null;
@@ -590,6 +633,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     };
 
+    const failedKeysNotice = (data) => (data && Array.isArray(data.failedOwnKeyUsers) && data.failedOwnKeyUsers.length)
+        ? `<p style="font-size: 0.8rem; color: #ffb74d; margin: 8px 0 0;">ดึงด้วย API key ของตัวเองไม่ได้: ${data.failedOwnKeyUsers.map(n => String(n).replace(/</g, '&lt;')).join(', ')} (ใช้ key สำรองแทน ตรวจสอบว่า key ยังใช้งานได้)</p>`
+        : '';
+
     const syncTimeBtn = document.getElementById('syncTimeEntriesBtn');
     if (syncTimeBtn) {
         syncTimeBtn.addEventListener('click', async () => {
@@ -626,7 +673,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     await Swal.fire({
                         icon: 'success',
                         title: 'ดึงข้อมูลสดสำเร็จ',
-                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">อัปเดตข้อมูลเวลาจริงช่วง ${rangeLabel} เรียบร้อยแล้ว (${(data && data.count) ? data.count.toLocaleString() : 0} รายการ)</p>`,
+                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">อัปเดตข้อมูลเวลาจริงช่วง ${rangeLabel} เรียบร้อยแล้ว (${(data && data.count) ? data.count.toLocaleString() : 0} รายการ)</p>${failedKeysNotice(data)}`,
                         showConfirmButton: true,
                         confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
                         confirmButtonColor: '#00897b',
@@ -810,7 +857,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     await Swal.fire({
                         icon: 'success',
                         title: 'ดึงข้อมูลสดสำเร็จ',
-                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">อัปเดตรายการเวลาช่วง ${rangeLabel} เรียบร้อยแล้ว (${(data && data.count) ? data.count.toLocaleString() : 0} รายการ)</p>`,
+                        html: `<p style="font-size: 0.95rem; color: #eee; margin: 8px 0;">อัปเดตรายการเวลาช่วง ${rangeLabel} เรียบร้อยแล้ว (${(data && data.count) ? data.count.toLocaleString() : 0} รายการ)</p>${failedKeysNotice(data)}`,
                         showConfirmButton: true,
                         confirmButtonText: 'ตกลง (ปิดหน้าต่าง)',
                         confirmButtonColor: '#00897b',
