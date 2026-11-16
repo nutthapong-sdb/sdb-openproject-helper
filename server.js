@@ -5,6 +5,7 @@ const cookieParser = require('cookie-parser');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const bcrypt = require('bcrypt');
+const { dateInTimezone, scheduleNightlySync } = require('./lib/nightly-sync');
 
 puppeteer.use(StealthPlugin());
 
@@ -2448,6 +2449,8 @@ function parseIsoDuration(durationStr) {
 
 const DAILY_SYNC_LIMIT = 3;
 const MIN_SYNC_DATE = '2026-01-01';
+const NIGHTLY_SYNC_HOURS = 26;
+const SYNC_TIMEZONE = process.env.SYNC_TIMEZONE || 'Asia/Bangkok';
 const TIME_ENTRIES_PAGE_SIZE = 500;
 const TIME_ENTRIES_MAX_PAGES = 300;
 
@@ -2465,14 +2468,17 @@ let activeSyncState = {
 };
 
 // Sync Time Entries directly from OpenProject API /api/v3/time_entries
-// Options: { days: 30, forceAll: false, onlyUser: { apiKey, openprojectId, name } } (onlyUser limits the sync to one person's own entries, fetched with their own key)
+// Options: { days: 30, sinceHours: 26, forceAll: false, onlyUser: { apiKey, openprojectId, name } } (sinceHours overrides days; onlyUser limits the sync to one person's own entries, fetched with their own key)
 async function syncOpenProjectTimeEntries(specificApiKey = null, options = {}) {
     const isForceAll = !!options.forceAll;
     const onlyUser = options.onlyUser || null;
     const days = parseInt(options.days || 30);
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - days);
-    const cutoffIso = cutoffDate.toISOString().split('T')[0];
+    const sinceHours = Number(options.sinceHours) || 0;
+    const cutoffIso = sinceHours
+        ? dateInTimezone(new Date(Date.now() - sinceHours * 3600 * 1000), SYNC_TIMEZONE)
+        : cutoffDate.toISOString().split('T')[0];
     const cutoffStr = isForceAll || cutoffIso < MIN_SYNC_DATE ? MIN_SYNC_DATE : cutoffIso;
 
     const maxPagesToFetch = TIME_ENTRIES_MAX_PAGES;
@@ -3019,6 +3025,39 @@ async function recalculateAndCacheRanking() {
     });
 
     return rows;
+}
+
+// Midnight job: refreshes the last NIGHTLY_SYNC_HOURS of everyone's hours so nobody has to press Sync OpenProject Time.
+async function runNightlySync() {
+    if (activeSyncState.active && (Date.now() - activeSyncState.startTime) < 300000) {
+        console.log('[NightlySync] Skipped, another sync is running.');
+        return;
+    }
+
+    activeSyncState = {
+        active: true,
+        startTime: Date.now(),
+        userId: 'nightly',
+        days: 2,
+        progressPages: 0,
+        totalPages: 0,
+        totalSynced: 0,
+        lastResult: null,
+        error: null
+    };
+
+    try {
+        console.log(`[NightlySync] Syncing the last ${NIGHTLY_SYNC_HOURS} hours for everyone...`);
+        const syncResult = await syncOpenProjectTimeEntries(null, { sinceHours: NIGHTLY_SYNC_HOURS });
+        await recalculateAndCacheRanking();
+        activeSyncState.lastResult = { ...syncResult, nightly: true };
+        console.log('[NightlySync] Completed.', activeSyncState.lastResult);
+    } catch (e) {
+        console.error('[NightlySync] Error:', e);
+        activeSyncState.error = e.message || 'Nightly sync failed';
+    } finally {
+        activeSyncState.active = false;
+    }
 }
 
 // GET Active Sync Status
@@ -3803,4 +3842,9 @@ app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
     const dbPath = require('path').resolve(dbFile || 'projects.db'); // Safe reference
     console.log(`Database file should be at: ${dbPath}`);
+
+    if (String(process.env.NIGHTLY_SYNC || 'true').toLowerCase() !== 'false') {
+        scheduleNightlySync({ run: runNightlySync, timeZone: SYNC_TIMEZONE });
+        console.log(`[NightlySync] Scheduled at every midnight (${SYNC_TIMEZONE}).`);
+    }
 });

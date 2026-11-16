@@ -116,6 +116,8 @@ All tables are initialized in `server.js`:
 
 - The Refresh button (`scope: 'self'`) fetches only the caller's own entries with their own `api_key`, limited to 3 per day for non-admins; the prune is scoped to that user.
 
+- **Nightly sync**: at every midnight (`SYNC_TIMEZONE`) the server runs `runNightlySync()`, which re-syncs the last 26 hours (`NIGHTLY_SYNC_HOURS`) for everyone using each registered user's own `api_key`, then rebuilds `ranking_cache`. It skips if another sync is running and does not catch up after downtime.
+
 ### D. Sync Projects Feature
 - Located directly below the Project and Task Type selectors in the Create Task panel (`#syncProjectsBtn`).
 - Open to all authenticated users (executes with the calling user's `user_apikey`).
@@ -140,6 +142,7 @@ All tables are initialized in `server.js`:
   - `PORT=3002` (default port used locally and in testing)
   - `DB_FILE=./projects.db`
   - `PUPPETEER_EXECUTABLE_PATH` / `PLAYWRIGHT_EXECUTABLE_PATH` (optional custom browser paths)
+  - `SYNC_TIMEZONE` (default `Asia/Bangkok`) and `NIGHTLY_SYNC=false` (disable the midnight job)
 
 ### Syntax & Lint Checks
 ```bash
